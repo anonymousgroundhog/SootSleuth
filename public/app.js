@@ -47,6 +47,7 @@ async function uploadFiles(fileList) {
     $("#inspectResult").innerHTML = "";
     $("#downloads").innerHTML = "";
     $("#instrumentBtn").disabled = true;
+    resetExplorer();
     openStream();
   } catch (e) {
     $("#fileList").innerHTML = `<div class="f err">${e.message}</div>`;
@@ -141,6 +142,252 @@ function renderInspect(d) {
     </div>`;
   $("#inspectResult").innerHTML = "";
   $("#inspectResult").appendChild(el);
+}
+
+// ── Forensic: Jimple + CFG explorer ───────────────────────────────────────────
+const ex = { classes: [], className: null, methods: [], subsig: null };
+
+function resetExplorer() {
+  ex.classes = []; ex.className = null; ex.methods = []; ex.subsig = null;
+  $("#explorerBody").classList.add("hidden");
+  $("#classList").innerHTML = ""; $("#methodList").innerHTML = "";
+  $("#classSearch").value = ""; $("#methodSearch").value = "";
+  $("#methodSearch").disabled = true;
+  $("#jimpleOut").textContent = "Pick a class (and optionally a method) to view Jimple.";
+  $("#cfgWrap").innerHTML = `<div class="hint">Pick a method to render its control-flow graph.</div>`;
+  $("#explorerHint").textContent = "Decompile app classes to Soot's Jimple IR and view a method's control-flow graph.";
+}
+
+async function api(url, body) {
+  const r = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jobId: state.jobId, file: state.primary, ...body }),
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || "request failed");
+  return d;
+}
+
+$("#loadClassesBtn").onclick = async () => {
+  if (!state.jobId) return;
+  const hint = $("#explorerHint");
+  hint.textContent = "Loading classes via Soot (first call warms up)…";
+  $("#loadClassesBtn").disabled = true;
+  try {
+    const { classes } = await api("/api/classes");
+    ex.classes = classes;
+    $("#explorerBody").classList.remove("hidden");
+    renderClassList("");
+    hint.textContent = `${classes.length} app class(es).`;
+  } catch (e) {
+    hint.textContent = "Error: " + e.message;
+  } finally { $("#loadClassesBtn").disabled = false; }
+};
+
+function renderClassList(filter) {
+  const f = filter.toLowerCase();
+  const list = ex.classes.filter(c => c.toLowerCase().includes(f)).slice(0, 2000);
+  $("#classList").innerHTML = list.map(c =>
+    `<li data-c="${c}" class="${c === ex.className ? "sel" : ""}">${c}</li>`).join("")
+    || `<li class="hint">no match</li>`;
+}
+$("#classSearch").oninput = e => renderClassList(e.target.value);
+
+$("#classList").onclick = async e => {
+  const li = e.target.closest("li[data-c]");
+  if (!li) return;
+  ex.className = li.dataset.c; ex.subsig = null;
+  renderClassList($("#classSearch").value);
+  $("#methodSearch").disabled = false;
+  $("#methodList").innerHTML = `<li class="hint">loading methods…</li>`;
+  // Show whole-class Jimple immediately.
+  loadJimple();
+  try {
+    const { methods } = await api("/api/methods", { className: ex.className });
+    ex.methods = methods;
+    renderMethodList("");
+  } catch (err) { $("#methodList").innerHTML = `<li class="hint">${err.message}</li>`; }
+};
+
+function renderMethodList(filter) {
+  const f = filter.toLowerCase();
+  const list = ex.methods.filter(m => m.subsig.toLowerCase().includes(f));
+  $("#methodList").innerHTML = list.map(m =>
+    `<li data-s="${encodeURIComponent(m.subsig)}" title="${m.subsig}" class="${m.subsig === ex.subsig ? "sel" : ""}">${m.subsig}</li>`).join("")
+    || `<li class="hint">no match</li>`;
+}
+$("#methodSearch").oninput = e => renderMethodList(e.target.value);
+
+$("#methodList").onclick = e => {
+  const li = e.target.closest("li[data-s]");
+  if (!li) return;
+  ex.subsig = decodeURIComponent(li.dataset.s);
+  renderMethodList($("#methodSearch").value);
+  const view = document.querySelector(".vtab.active").dataset.view;
+  if (view === "cfg") loadCfg(); else loadJimple();
+};
+
+// View sub-tabs (Jimple / CFG)
+document.querySelectorAll(".vtab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".vtab").forEach(x => x.classList.toggle("active", x === t));
+  document.querySelectorAll(".view-pane").forEach(p =>
+    p.classList.toggle("hidden", p.dataset.viewpane !== t.dataset.view));
+  if (t.dataset.view === "cfg") loadCfg(); else loadJimple();
+});
+
+async function loadJimple() {
+  if (!ex.className) return;
+  const out = $("#jimpleOut");
+  out.textContent = "loading…";
+  try {
+    const d = await api("/api/jimple", { className: ex.className, subsig: ex.subsig || undefined });
+    out.textContent = d.jimple || "// (empty)";
+  } catch (e) { out.textContent = "Error: " + e.message; }
+}
+
+async function loadCfg() {
+  const wrap = $("#cfgWrap");
+  if (!ex.className || !ex.subsig) { wrap.innerHTML = `<div class="hint">Pick a method to render its control-flow graph.</div>`; return; }
+  wrap.innerHTML = `<div class="hint">building CFG…</div>`;
+  try {
+    const d = await api("/api/cfg", { className: ex.className, subsig: ex.subsig });
+    if (!d.nodes || !d.nodes.length) { wrap.innerHTML = `<div class="hint">${d.note || "no control-flow graph (no body)"}</div>`; return; }
+    wrap.innerHTML = "";
+    wrap.appendChild(renderCfg(d));
+  } catch (e) { wrap.innerHTML = `<div class="hint">Error: ${e.message}</div>`; }
+}
+
+// Simple layered layout: assign each node a depth (longest path from an entry
+// in the DAG of fall/branch edges), lay depths out top→bottom, then draw an SVG
+// with statement boxes and colored edges. Good enough for method-sized graphs.
+function renderCfg(cfg) {
+  const nodes = cfg.nodes, edges = cfg.edges;
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const succ = new Map(nodes.map(n => [n.id, []]));
+  const indeg = new Map(nodes.map(n => [n.id, 0]));
+  for (const e of edges) {
+    if (!succ.has(e.from) || !byId.has(e.to)) continue;
+    succ.get(e.from).push(e.to);
+    indeg.set(e.to, indeg.get(e.to) + 1);
+  }
+  // BFS depth from nodes with indeg 0 (fallback: node 0), ignoring back-edges.
+  const depth = new Map();
+  const roots = nodes.filter(n => indeg.get(n.id) === 0).map(n => n.id);
+  const queue = roots.length ? roots.slice() : [nodes[0].id];
+  queue.forEach(id => depth.set(id, 0));
+  const seen = new Set(queue);
+  // Iterative relaxation over edges (few nodes; keep it simple & robust to cycles).
+  for (let pass = 0; pass < nodes.length; pass++) {
+    let changed = false;
+    for (const e of edges) {
+      if (!depth.has(e.from)) continue;
+      const nd = depth.get(e.from) + 1;
+      if (!depth.has(e.to) || nd > depth.get(e.to)) {
+        // cap to avoid runaway on cycles
+        if (nd <= nodes.length) { depth.set(e.to, nd); changed = true; }
+      }
+    }
+    if (!changed) break;
+  }
+  nodes.forEach(n => { if (!depth.has(n.id)) depth.set(n.id, 0); });
+
+  // Group by depth → rows; order within a row by id for stability.
+  const rows = new Map();
+  for (const n of nodes) {
+    const d = depth.get(n.id);
+    if (!rows.has(d)) rows.set(d, []);
+    rows.get(d).push(n);
+  }
+  const depths = [...rows.keys()].sort((a, b) => a - b);
+
+  // Layout constants.
+  const BW = 320, ROWH = 78, PADX = 24, PADY = 24, GAPX = 24;
+  const pos = new Map();
+  let maxCols = 0;
+  depths.forEach((d, r) => {
+    const row = rows.get(d).sort((a, b) => a.id - b.id);
+    maxCols = Math.max(maxCols, row.length);
+    row.forEach((n, c) => pos.set(n.id, {
+      x: PADX + c * (BW + GAPX),
+      y: PADY + r * ROWH,
+      row: r, col: c,
+    }));
+  });
+  const width = PADX * 2 + maxCols * BW + (maxCols - 1) * GAPX;
+  const height = PADY * 2 + depths.length * ROWH;
+
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("width", width);
+  svg.setAttribute("height", height);
+  svg.setAttribute("class", "cfg-svg");
+
+  const EDGE_COLOR = { fall: "#8a8f98", branch: "#3fb950", goto: "#a371f7", switch: "#d29922", exc: "#f85149" };
+  // arrow markers per color
+  const defs = document.createElementNS(NS, "defs");
+  for (const [k, col] of Object.entries(EDGE_COLOR)) {
+    const m = document.createElementNS(NS, "marker");
+    m.setAttribute("id", "arw-" + k);
+    m.setAttribute("markerWidth", "8"); m.setAttribute("markerHeight", "8");
+    m.setAttribute("refX", "7"); m.setAttribute("refY", "3");
+    m.setAttribute("orient", "auto"); m.setAttribute("markerUnits", "userSpaceOnUse");
+    const p = document.createElementNS(NS, "path");
+    p.setAttribute("d", "M0,0 L7,3 L0,6 Z"); p.setAttribute("fill", col);
+    m.appendChild(p); defs.appendChild(m);
+  }
+  svg.appendChild(defs);
+
+  const BH = 46;
+  // Edges first (under boxes).
+  for (const e of edges) {
+    const a = pos.get(e.from), b = pos.get(e.to);
+    if (!a || !b) continue;
+    const col = EDGE_COLOR[e.kind] || EDGE_COLOR.fall;
+    const backEdge = b.y <= a.y;
+    const x1 = a.x + BW / 2, y1 = a.y + BH;
+    const x2 = b.x + BW / 2, y2 = b.y;
+    const path = document.createElementNS(NS, "path");
+    let d;
+    if (backEdge) {
+      // route back-edges out to the right so they don't overlap boxes
+      const off = Math.min(width - (a.x + BW), 60) + 30;
+      const mx = Math.max(x1, x2) + off;
+      d = `M${x1},${y1 - BH / 2} C${mx},${y1} ${mx},${y2} ${x2},${y2 + BH / 2}`;
+    } else {
+      const my = (y1 + y2) / 2;
+      d = `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
+    }
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", col);
+    path.setAttribute("stroke-width", backEdge ? "1.5" : "1.8");
+    if (backEdge) path.setAttribute("stroke-dasharray", "4,3");
+    path.setAttribute("marker-end", `url(#arw-${e.kind in EDGE_COLOR ? e.kind : "fall"})`);
+    svg.appendChild(path);
+  }
+
+  // Boxes.
+  const KIND_CLASS = { branch: "n-branch", switch: "n-switch", goto: "n-goto", throw: "n-throw", return: "n-return" };
+  for (const n of nodes) {
+    const p = pos.get(n.id);
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("transform", `translate(${p.x},${p.y})`);
+    const rect = document.createElementNS(NS, "rect");
+    rect.setAttribute("width", BW); rect.setAttribute("height", BH);
+    rect.setAttribute("rx", "6");
+    rect.setAttribute("class", "cfg-node " + (KIND_CLASS[n.kind] || "n-stmt"));
+    g.appendChild(rect);
+    const txt = document.createElementNS(NS, "text");
+    txt.setAttribute("x", "10"); txt.setAttribute("y", "27");
+    txt.setAttribute("class", "cfg-text");
+    const label = `${n.id}: ${n.text}`;
+    txt.textContent = label.length > 46 ? label.slice(0, 45) + "…" : label;
+    const title = document.createElementNS(NS, "title");
+    title.textContent = n.text;
+    g.appendChild(txt); g.appendChild(title);
+    svg.appendChild(g);
+  }
+  return svg;
 }
 
 // ── Hacking ──────────────────────────────────────────────────────────────────

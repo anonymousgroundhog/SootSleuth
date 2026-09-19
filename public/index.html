@@ -37,6 +37,47 @@
         <p class="panel-desc">Inspect the app: detect ad SDKs (AdMob &amp; others), Play Store traces, permissions, and package metadata. Read-only.</p>
         <button id="inspectBtn" class="primary">Run inspection</button>
         <div id="inspectResult" class="result"></div>
+
+        <!-- Jimple IR + control-flow explorer -->
+        <div class="explorer">
+          <div class="explorer-head">
+            <h3>🧬 Jimple &amp; control flow</h3>
+            <button id="loadClassesBtn" class="secondary">Load classes</button>
+            <span class="hint" id="explorerHint">Decompile app classes to Soot's Jimple IR and view a method's control-flow graph.</span>
+          </div>
+
+          <div id="explorerBody" class="explorer-body hidden">
+            <div class="col col-classes">
+              <input type="text" id="classSearch" class="search" placeholder="filter classes…" />
+              <ul id="classList" class="picklist"></ul>
+            </div>
+            <div class="col col-methods">
+              <input type="text" id="methodSearch" class="search" placeholder="filter methods…" disabled />
+              <ul id="methodList" class="picklist"></ul>
+            </div>
+            <div class="col col-view">
+              <div class="view-tabs">
+                <button class="vtab active" data-view="jimple">Jimple</button>
+                <button class="vtab" data-view="cfg">Control flow</button>
+              </div>
+              <div class="view-pane" data-viewpane="jimple">
+                <pre id="jimpleOut" class="jimple">Pick a class (and optionally a method) to view Jimple.</pre>
+              </div>
+              <div class="view-pane hidden" data-viewpane="cfg">
+                <div id="cfgWrap" class="cfgwrap">
+                  <div class="hint" id="cfgHint">Pick a method to render its control-flow graph.</div>
+                </div>
+                <div class="cfg-legend">
+                  <span><i class="e-fall"></i> fall-through</span>
+                  <span><i class="e-branch"></i> branch taken</span>
+                  <span><i class="e-goto"></i> goto</span>
+                  <span><i class="e-switch"></i> switch</span>
+                  <span><i class="e-exc"></i> exception</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Hacking -->

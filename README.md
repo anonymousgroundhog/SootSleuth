@@ -7,7 +7,10 @@ Drag an APK into the browser and either investigate it or instrument it.
 
 - **🕵️ Forensic** — static inspection: ad-SDK detection (AdMob, AppLovin,
   Unity, IronSource, Meta, and more), Play Store / billing traces, package
-  metadata, DEX count. Read-only.
+  metadata, DEX count. Also a **Jimple & control-flow explorer**: pick an app
+  class → a method → view Soot's Jimple IR or an interactive control-flow graph
+  (statements as nodes; branch / fall-through / goto / switch / exception edges
+  color-coded). Read-only.
 - **💉 Hacking** — inject `Log.d("SootInjection", "Entering: <method sig>")` at
   the start of every targeted method via Soot (`LogInjector.java`), then
   zipalign + apksign the result. Optionally install the injected APK on a
@@ -99,11 +102,13 @@ injection logs firing.
 server.js          Express server, upload, SSE job streaming
 lib/tools.js       Cross-platform tool/SDK detection
 lib/inspector.js   Forensic static analysis (unzip+strings or pure-JS)
+lib/jimple.js      Forensic Jimple IR + CFG (wraps JimpleDumper.java)
 lib/injector.js    Compile LogInjector → Soot inject → zipalign/apksign
 lib/instrument.js  adb install → launch → logcat capture → uninstall
 lib/runner.js      Subprocess spawner streaming lines to a callback
 public/            Drag-drop web UI (index.html, app.js, style.css)
-java/              LogInjector.java (Soot BodyTransformer) + compiled .class
+java/              LogInjector.java (BodyTransformer), DexSplicer.java,
+                   JimpleDumper.java (Jimple/CFG dump) + compiled .class
 jar_libs/          Soot 4.7.1 + dependencies
 ```
 

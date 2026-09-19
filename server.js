@@ -19,8 +19,10 @@ const crypto = require("crypto");
 
 const { checkTools, UPLOADS_DIR, OUTPUT_DIR } = require("./lib/tools");
 const { inspectApk } = require("./lib/inspector");
+const jimpleLib = require("./lib/jimple");
 const { inject } = require("./lib/injector");
 const { instrument, listDevices } = require("./lib/instrument");
+const bundleLib = require("./lib/bundle");
 
 const PORT = process.env.PORT || 4700;
 const app = express();
@@ -127,6 +129,60 @@ app.post("/api/inspect", (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// FORENSIC — Jimple IR + control-flow graph (read-only Soot).
+// Resolve to the raw APK Soot can process (bundle → its base APK, extracted once).
+function resolveSootApk(jobId, file) {
+  const apk = resolveApk(jobId, file);
+  if (!apk) return null;
+  if (!bundleLib.isBundle(apk)) return apk;
+  // Extract the base APK to a stable per-job dir so it's reused across requests.
+  const baseDir = path.join(UPLOADS_DIR, jobId, ".soot-base");
+  try {
+    if (!fs.existsSync(baseDir)) {
+      fs.mkdirSync(baseDir, { recursive: true });
+      bundleLib.unpack(apk, baseDir);
+    }
+    const manifest = bundleLib.readManifest(baseDir);
+    const base = bundleLib.findBaseApk(baseDir, manifest);
+    return base ? path.join(baseDir, base) : null;
+  } catch { return null; }
+}
+
+app.post("/api/classes", (req, res) => {
+  const { jobId, file } = req.body || {};
+  const apk = resolveSootApk(jobId, file);
+  if (!apk) return res.status(400).json({ error: "APK not found for job" });
+  try { res.json({ classes: jimpleLib.listClasses(apk) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/methods", (req, res) => {
+  const { jobId, file, className } = req.body || {};
+  const apk = resolveSootApk(jobId, file);
+  if (!apk) return res.status(400).json({ error: "APK not found for job" });
+  if (!className) return res.status(400).json({ error: "className required" });
+  try { res.json({ className, methods: jimpleLib.listMethods(apk, className) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/jimple", (req, res) => {
+  const { jobId, file, className, subsig } = req.body || {};
+  const apk = resolveSootApk(jobId, file);
+  if (!apk) return res.status(400).json({ error: "APK not found for job" });
+  if (!className) return res.status(400).json({ error: "className required" });
+  try { res.json({ className, subsig: subsig || null, jimple: jimpleLib.jimple(apk, className, subsig) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/cfg", (req, res) => {
+  const { jobId, file, className, subsig } = req.body || {};
+  const apk = resolveSootApk(jobId, file);
+  if (!apk) return res.status(400).json({ error: "APK not found for job" });
+  if (!className || !subsig) return res.status(400).json({ error: "className and subsig required" });
+  try { res.json(jimpleLib.cfg(apk, className, subsig)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // HACKING (inject) — async, streams to SSE.

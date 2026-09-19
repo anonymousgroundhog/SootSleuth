@@ -22,6 +22,7 @@ The README is the overview. Detailed, code-level docs live in [`docs/`](docs/):
 
 | Doc | Covers |
 |---|---|
+| [docs/SETUP.md](docs/SETUP.md) | **Setup from scratch** (Windows/macOS/Linux): JDK + Node, the Android SDK, where the platform JARs live for Soot, installing `apksigner`/`zipalign`, and preparing a device |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the pieces fit; request flow; sync vs async+SSE; directory layout; design choices |
 | [docs/FORENSIC.md](docs/FORENSIC.md) | The static scan (`inspector.js`) and the Jimple/CFG explorer (`jimple.js` + `JimpleDumper.java`) |
 | [docs/INJECTION.md](docs/INJECTION.md) | The full inject pipeline: `LogInjector` → `DexSplicer` (VerifyError fix) → signing → XAPK bundles → on-device instrument |
@@ -44,6 +45,10 @@ is absent, so it works on Windows too).
 
 Cross-platform: Windows, macOS, Linux (paths, classpath separators, and
 build-tool extensions are handled per-OS in `lib/tools.js`).
+
+**New machine?** [docs/SETUP.md](docs/SETUP.md) is a from-scratch walkthrough
+for all three OSes — installing the SDK, where the platform JARs live for Soot,
+getting `apksigner`/`zipalign`, and preparing a device.
 
 ## Run
 

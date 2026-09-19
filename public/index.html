@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SootSleuth</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>🔍 SootSleuth</h1>
+    <p class="tagline">APK forensics &amp; Soot-powered log injection</p>
+    <div id="toolbar" class="toolbar" title="Tool availability on this machine"></div>
+  </header>
+
+  <main>
+    <!-- Drop zone -->
+    <section id="drop" class="dropzone">
+      <input type="file" id="fileInput" accept=".apk,.apks,.xapk" multiple hidden />
+      <div class="drop-inner">
+        <div class="drop-icon">📦</div>
+        <p><strong>Drag &amp; drop an APK</strong> here, or <button id="browseBtn" class="link">browse</button></p>
+        <p class="hint">.apk · .apks · .xapk (base + split APKs supported)</p>
+      </div>
+      <div id="fileList" class="filelist"></div>
+    </section>
+
+    <!-- Mode tabs -->
+    <section id="modes" class="modes hidden">
+      <div class="tabs">
+        <button class="tab active" data-mode="forensic">🕵️ Forensic mode</button>
+        <button class="tab" data-mode="hacking">💉 Hacking mode</button>
+      </div>
+
+      <!-- Forensic -->
+      <div class="panel active" data-panel="forensic">
+        <p class="panel-desc">Inspect the app: detect ad SDKs (AdMob &amp; others), Play Store traces, permissions, and package metadata. Read-only.</p>
+        <button id="inspectBtn" class="primary">Run inspection</button>
+        <div id="inspectResult" class="result"></div>
+      </div>
+
+      <!-- Hacking -->
+      <div class="panel" data-panel="hacking">
+        <p class="panel-desc">Inject <code>Log.d("SootInjection", …)</code> at method entry via Soot, then optionally install on a device and capture logcat.</p>
+
+        <fieldset class="opts">
+          <legend>Injection scope</legend>
+          <label><input type="radio" name="scope" value="all" checked /> Inject all methods <span class="hint">(broad; framework/ads packages still excluded by LogInjector to avoid VerifyErrors)</span></label>
+          <label><input type="radio" name="scope" value="custom" /> Custom class filter</label>
+          <input type="text" id="patterns" class="patterns" placeholder="com.google.android.gms.ads.*, com.example.*" disabled />
+          <p class="hint" id="scopeHint"></p>
+        </fieldset>
+
+        <div class="btnrow">
+          <button id="injectBtn" class="primary">Inject logs</button>
+          <button id="instrumentBtn" class="secondary" disabled>Install &amp; capture logcat</button>
+        </div>
+
+        <div class="device-row">
+          <label>Device: <select id="deviceSel"><option value="">(auto)</option></select></label>
+          <label>Logcat duration: <input type="number" id="duration" value="30" min="5" max="600" /> s</label>
+        </div>
+
+        <div id="downloads" class="downloads"></div>
+      </div>
+    </section>
+
+    <!-- Live log -->
+    <section id="logSection" class="logsection hidden">
+      <div class="log-head">
+        <span>Console</span>
+        <button id="clearLog" class="link">clear</button>
+      </div>
+      <pre id="log" class="log"></pre>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

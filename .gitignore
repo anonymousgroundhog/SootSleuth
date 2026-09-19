@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Runtime data (uploaded APKs to analyze + injected outputs)
+uploads/
+output/
+
+# Compiled Java artifacts (server recompiles on demand)
+*.class
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+
+# Claude Code local
+.claude/

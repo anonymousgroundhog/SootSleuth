@@ -26,6 +26,12 @@ public class LogInjector {
     private static final AtomicInteger injected = new AtomicInteger(0);
     private static final AtomicInteger skipped  = new AtomicInteger(0);
 
+    // Set of classes we actually injected into — written to
+    // <output-dir>/injected-classes.txt so DexSplicer can splice exactly these
+    // classes back onto the original dex (see DexSplicer.java).
+    private static final Set<String> injectedClasses =
+        java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<String>());
+
     public static void main(String[] args) {
         if (args.length >= 1 && args[0].equals("--list-classes")) {
             if (args.length != 3) {
@@ -98,6 +104,7 @@ public class LogInjector {
                     try {
                         injectLog(body);
                         injected.incrementAndGet();
+                        injectedClasses.add(method.getDeclaringClass().getName());
                     } catch (Exception e) {
                         skipped.incrementAndGet();
                         System.err.println("[SKIP] " + method.getSignature() + " — " + e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -107,6 +114,17 @@ public class LogInjector {
         );
 
         soot.Main.main(new String[]{"-process-dir", apkInput, "-force-overwrite"});
+
+        // Write the list of injected classes so DexSplicer can restore every
+        // other class from the original dex (avoids Soot DEX round-trip corruption).
+        try {
+            java.nio.file.Path listPath = java.nio.file.Paths.get(outputDir, "injected-classes.txt");
+            java.util.List<String> lines = new java.util.ArrayList<>(injectedClasses);
+            java.nio.file.Files.write(listPath, lines);
+            System.out.println("Wrote injected-classes list: " + listPath + " (" + lines.size() + " classes)");
+        } catch (Exception e) {
+            System.err.println("[WARN] could not write injected-classes.txt: " + e.getMessage());
+        }
 
         System.out.println("Injection complete. Injected: " + injected.get()
                 + "  Skipped: " + skipped.get()

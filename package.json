@@ -1,0 +1,16 @@
+{
+  "name": "sootsleuth",
+  "version": "1.0.0",
+  "description": "SootSleuth — web tool for APK forensics (inspect) and log injection (Soot) with on-device instrumentation.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "bin": {
+    "sootsleuth": "./server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "multer": "^2.0.1"
+  }
+}

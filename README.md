@@ -16,6 +16,18 @@ Drag an APK into the browser and either investigate it or instrument it.
   zipalign + apksign the result. Optionally install the injected APK on a
   connected device/emulator and capture logcat live.
 
+## Documentation
+
+The README is the overview. Detailed, code-level docs live in [`docs/`](docs/):
+
+| Doc | Covers |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the pieces fit; request flow; sync vs async+SSE; directory layout; design choices |
+| [docs/FORENSIC.md](docs/FORENSIC.md) | The static scan (`inspector.js`) and the Jimple/CFG explorer (`jimple.js` + `JimpleDumper.java`) |
+| [docs/INJECTION.md](docs/INJECTION.md) | The full inject pipeline: `LogInjector` → `DexSplicer` (VerifyError fix) → signing → XAPK bundles → on-device instrument |
+| [docs/API.md](docs/API.md) | Every HTTP endpoint with request/response shapes |
+| [docs/INTERNALS.md](docs/INTERNALS.md) | Cross-platform tool discovery, the subprocess runner, the job/SSE registry, the frontend, building the Java helpers |
+
 ## Requirements
 
 | Feature | Needs |
@@ -60,41 +72,22 @@ the targeted classes are instrumented.
 
 ## XAPK / split bundles
 
-`.xapk` and `.apks` files are ZIP bundles containing a base APK plus
-`config.*` split APKs and a `manifest.json`. SootSleuth handles them in both
-modes:
-
-- **Forensic** — unpacks to the inner base APK and inspects that; permissions
-  come from `aapt2` (falling back to the XAPK `manifest.json`).
-- **Hacking** — unpacks the bundle, injects the base APK, **re-signs the base
-  and every split with one debug key** (Android requires a uniform signer
-  across a split set), then repacks a new `<name>-injected.xapk` containing the
-  injected base + all splits + `manifest.json` + icon. The whole bundle is what
-  you download, so it installs as a complete app.
+`.xapk` and `.apks` files are ZIP bundles (base APK + `config.*` splits +
+`manifest.json`) and are handled in both modes: forensic inspects the inner
+base APK; hacking injects the base, re-signs the base + every split with one
+key, and repacks a complete injected bundle. Full detail:
+[docs/INJECTION.md → XAPK / split bundles](docs/INJECTION.md#xapk--split-bundles-libbundlejs).
 
 ## Dex splicing (avoids VerifyError on modern apps)
 
-Soot 4.7.1's DEX backend round-trips **every** class through Jimple and
-re-encodes it, which corrupts certain synthetic classes (protobuf
-`GeneratedMessageLite`, kotlinx coroutines `SharedFlowImpl`, Room DAOs, some
-Compose interfaces) — ART then rejects them at runtime with `VerifyError` /
-`IncompatibleClassChangeError`, even though those classes were never targeted.
-
-SootSleuth fixes this with a **dex splice** (`java/DexSplicer.java`, dexlib2):
-
-1. `LogInjector` records the classes it actually injected into
-   (`injected-classes.txt`).
-2. After Soot runs, `DexSplicer` rebuilds **only the dex files that contain an
-   injected class**; every other `classes*.dex` is copied **byte-for-byte** from
-   the original APK. Injected classes stay in their original dex entry, so there
-   are no duplicate definitions.
-3. It reads/writes with the original APK's own dex opcode set, so encoding
-   matches exactly.
-
-Result: injected classes carry the log calls; everything else is bit-identical
-to the original → no VerifyErrors. Verified on device with a modern
-Compose/coroutines/datastore app (AI Enlarger): 0 VerifyError, 0 crashes,
-injection logs firing.
+Soot 4.7.1's DEX backend re-encodes **every** class it round-trips through
+Jimple, corrupting some synthetic classes it never needed to touch (protobuf,
+kotlinx coroutines, Room, some Compose interfaces) — ART then rejects them with
+`VerifyError` / `IncompatibleClassChangeError`. SootSleuth fixes this by taking
+only the injected classes from Soot's output and copying every untouched
+`classes*.dex` byte-for-byte from the original APK (`java/DexSplicer.java`).
+Full detail:
+[docs/INJECTION.md → Dex splice](docs/INJECTION.md#step-2--dex-splice-javadexsplicerjava).
 
 ## Layout
 

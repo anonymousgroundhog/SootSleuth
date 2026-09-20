@@ -72,6 +72,27 @@ Body: `{ jobId, file?, className, subsig }` → the control-flow graph JSON:
 Edge kinds: `branch` / `fall` / `goto` / `switch` / `exc`. (See
 [FORENSIC.md → CFG construction](FORENSIC.md#cfg-construction).)
 
+### `POST /api/callgraph`
+
+Whole-app call graph — methods as nodes, "calls" as edges. Body:
+`{ jobId, file?, pkgPrefix?, maxNodes? }`.
+
+- `pkgPrefix` — scope to this package. Omit/blank → the app's auto-detected base
+  package.
+- `maxNodes` — cap (default 400); the graph is truncated to keep it renderable.
+
+Response:
+
+```jsonc
+{ "scope": "com.app.aiimglarger", "basePackage": "com.app.aiimglarger",
+  "nodeCount": 400, "edgeCount": 322, "truncated": true, "maxNodes": 400,
+  "nodes": [ { "id": 0, "label": "MainActivity.onCreate", "cls": "...", "sub": "...", "kind": "method" } ],
+  "edges": [ { "from": 5, "to": 42 } ] }
+```
+
+Node `kind` ∈ `init` / `static` / `method`. See
+[FORENSIC.md → Whole-app call graph](FORENSIC.md#3-whole-app-call-graph).
+
 ---
 
 ## Hacking (async + SSE)

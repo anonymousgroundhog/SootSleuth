@@ -155,6 +155,8 @@ function resetExplorer() {
   $("#methodSearch").disabled = true;
   $("#jimpleOut").textContent = "Pick a class (and optionally a method) to view Jimple.";
   $("#cfgWrap").innerHTML = `<div class="hint">Pick a method to render its control-flow graph.</div>`;
+  $("#cgWrap").innerHTML = `<div class="hint">Whole-app call graph: methods are nodes, edges are calls. Scoped to the app's own package and capped for readability. Click <b>Render</b> (loads app classes first if needed).</div>`;
+  $("#cgMeta").textContent = ""; $("#cgPkg").value = ""; $("#cgCap").value = "400";
   $("#explorerHint").textContent = "Decompile app classes to Soot's Jimple IR and view a method's control-flow graph.";
 }
 
@@ -227,12 +229,15 @@ $("#methodList").onclick = e => {
   if (view === "cfg") loadCfg(); else loadJimple();
 };
 
-// View sub-tabs (Jimple / CFG)
+// View sub-tabs (Jimple / CFG / App call graph)
 document.querySelectorAll(".vtab").forEach(t => t.onclick = () => {
   document.querySelectorAll(".vtab").forEach(x => x.classList.toggle("active", x === t));
   document.querySelectorAll(".view-pane").forEach(p =>
     p.classList.toggle("hidden", p.dataset.viewpane !== t.dataset.view));
-  if (t.dataset.view === "cfg") loadCfg(); else loadJimple();
+  const v = t.dataset.view;
+  if (v === "cfg") loadCfg();
+  else if (v === "jimple") loadJimple();
+  // callgraph is on-demand (heavy) — user clicks Render.
 });
 
 async function loadJimple() {
@@ -388,6 +393,169 @@ function renderCfg(cfg) {
     svg.appendChild(g);
   }
   return svg;
+}
+
+// ── App call graph ─────────────────────────────────────────────────────────────
+$("#cgRenderBtn").onclick = loadCallGraph;
+async function loadCallGraph() {
+  if (!state.jobId) return;
+  const wrap = $("#cgWrap"), meta = $("#cgMeta");
+  const pkgPrefix = $("#cgPkg").value.trim();
+  const maxNodes = parseInt($("#cgCap").value, 10) || 400;
+  wrap.innerHTML = `<div class="hint">building call graph via Soot (first call warms up)…</div>`;
+  meta.textContent = "";
+  $("#cgRenderBtn").disabled = true;
+  try {
+    const d = await api("/api/callgraph", { pkgPrefix, maxNodes });
+    if (!d.nodes || !d.nodes.length) { wrap.innerHTML = `<div class="hint">no methods in scope "${d.scope}".</div>`; return; }
+    // Auto-fill the detected package so the user sees/can-edit the scope.
+    if (!pkgPrefix && d.basePackage) $("#cgPkg").value = d.basePackage;
+    meta.innerHTML =
+      `scope <b>${d.scope}</b> · ${d.nodeCount} methods · ${d.edgeCount} calls`
+      + (d.truncated ? ` · <span class="cg-trunc">truncated to ${d.maxNodes} — narrow the package or raise max nodes</span>` : "");
+    wrap.innerHTML = "";
+    wrap.appendChild(renderCallGraph(d));
+  } catch (e) { wrap.innerHTML = `<div class="hint">Error: ${e.message}</div>`; }
+  finally { $("#cgRenderBtn").disabled = false; }
+}
+
+// Layered layout for a directed (possibly cyclic) call graph: assign levels by
+// longest-path relaxation ignoring back-edges, pack each level into a row, draw
+// an SVG with pan (drag) + zoom (wheel). Node click shows the method's Jimple.
+function renderCallGraph(cg) {
+  const nodes = cg.nodes, edges = cg.edges;
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const indeg = new Map(nodes.map(n => [n.id, 0]));
+  for (const e of edges) if (byId.has(e.to)) indeg.set(e.to, indeg.get(e.to) + 1);
+
+  // Longest-path leveling, capped to survive cycles.
+  const level = new Map(nodes.map(n => [n.id, 0]));
+  for (let pass = 0; pass < Math.min(nodes.length, 60); pass++) {
+    let changed = false;
+    for (const e of edges) {
+      if (!level.has(e.from) || !level.has(e.to)) continue;
+      const nl = level.get(e.from) + 1;
+      if (nl > level.get(e.to) && nl <= nodes.length) { level.set(e.to, nl); changed = true; }
+    }
+    if (!changed) break;
+  }
+
+  // Rows by level.
+  const rows = new Map();
+  for (const n of nodes) {
+    const l = level.get(n.id);
+    if (!rows.has(l)) rows.set(l, []);
+    rows.get(l).push(n);
+  }
+  const levels = [...rows.keys()].sort((a, b) => a - b);
+
+  const BW = 210, BH = 34, GAPX = 18, ROWH = 74, PADX = 24, PADY = 24;
+  const pos = new Map();
+  let maxCols = 0;
+  levels.forEach((l, r) => {
+    const row = rows.get(l).sort((a, b) => a.label.localeCompare(b.label));
+    maxCols = Math.max(maxCols, row.length);
+    row.forEach((n, c) => pos.set(n.id, { x: PADX + c * (BW + GAPX), y: PADY + r * ROWH }));
+  });
+  const width = PADX * 2 + Math.max(1, maxCols) * BW + (maxCols - 1) * GAPX;
+  const height = PADY * 2 + levels.length * ROWH;
+
+  const NS = "http://www.w3.org/2000/svg";
+  const container = document.createElement("div");
+  container.className = "cg-viewport";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("width", width);
+  svg.setAttribute("height", height);
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("class", "cg-svg");
+
+  const defs = document.createElementNS(NS, "defs");
+  const mk = document.createElementNS(NS, "marker");
+  mk.setAttribute("id", "cg-arrow");
+  mk.setAttribute("markerWidth", "7"); mk.setAttribute("markerHeight", "7");
+  mk.setAttribute("refX", "6"); mk.setAttribute("refY", "2.5");
+  mk.setAttribute("orient", "auto"); mk.setAttribute("markerUnits", "userSpaceOnUse");
+  const mp = document.createElementNS(NS, "path");
+  mp.setAttribute("d", "M0,0 L6,2.5 L0,5 Z"); mp.setAttribute("fill", "#5b6472");
+  mk.appendChild(mp); defs.appendChild(mk); svg.appendChild(defs);
+
+  // Edges.
+  for (const e of edges) {
+    const a = pos.get(e.from), b = pos.get(e.to);
+    if (!a || !b) continue;
+    const back = b.y <= a.y;
+    const x1 = a.x + BW / 2, y1 = a.y + BH, x2 = b.x + BW / 2, y2 = b.y;
+    const path = document.createElementNS(NS, "path");
+    let d;
+    if (back) {
+      const mx = Math.max(x1, x2) + 46;
+      d = `M${x1},${a.y + BH / 2} C${mx},${y1} ${mx},${y2} ${x2},${b.y + BH / 2}`;
+    } else {
+      const my = (y1 + y2) / 2;
+      d = `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
+    }
+    path.setAttribute("d", d);
+    path.setAttribute("class", "cg-edge" + (back ? " back" : ""));
+    path.setAttribute("marker-end", "url(#cg-arrow)");
+    svg.appendChild(path);
+  }
+
+  // Nodes.
+  for (const n of nodes) {
+    const p = pos.get(n.id);
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("transform", `translate(${p.x},${p.y})`);
+    g.setAttribute("class", "cg-node k-" + (n.kind || "method"));
+    g.style.cursor = "pointer";
+    const rect = document.createElementNS(NS, "rect");
+    rect.setAttribute("width", BW); rect.setAttribute("height", BH); rect.setAttribute("rx", "6");
+    g.appendChild(rect);
+    const txt = document.createElementNS(NS, "text");
+    txt.setAttribute("x", "9"); txt.setAttribute("y", "22"); txt.setAttribute("class", "cg-ntext");
+    txt.textContent = n.label.length > 30 ? n.label.slice(0, 29) + "…" : n.label;
+    const title = document.createElementNS(NS, "title");
+    title.textContent = `${n.cls}: ${n.sub}\n(click to view Jimple)`;
+    g.appendChild(txt); g.appendChild(title);
+    // Click a node → jump to its method's Jimple.
+    g.onclick = () => openMethodJimple(n.cls, n.sub);
+    svg.appendChild(g);
+  }
+
+  container.appendChild(svg);
+  attachPanZoom(container, svg, width, height);
+  return container;
+}
+
+// Selecting a call-graph node loads that class+method into the Jimple view.
+async function openMethodJimple(cls, sub) {
+  ex.className = cls; ex.subsig = sub;
+  // switch to the Jimple tab
+  document.querySelectorAll(".vtab").forEach(x => x.classList.toggle("active", x.dataset.view === "jimple"));
+  document.querySelectorAll(".view-pane").forEach(p => p.classList.toggle("hidden", p.dataset.viewpane !== "jimple"));
+  // reflect in the class picker if present
+  if (ex.classes.length) { $("#classSearch").value = cls; renderClassList(cls); }
+  loadJimple();
+}
+
+// Drag to pan, wheel to zoom, over an SVG inside a viewport div.
+function attachPanZoom(viewport, svg, w, h) {
+  let scale = 1, tx = 0, ty = 0, dragging = false, sx = 0, sy = 0;
+  const apply = () => svg.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
+  svg.style.transformOrigin = "0 0";
+  viewport.addEventListener("wheel", e => {
+    e.preventDefault();
+    const f = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const rect = viewport.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    // zoom toward cursor
+    tx = mx - (mx - tx) * f; ty = my - (my - ty) * f;
+    scale = Math.max(0.1, Math.min(4, scale * f));
+    apply();
+  }, { passive: false });
+  viewport.addEventListener("mousedown", e => { dragging = true; sx = e.clientX - tx; sy = e.clientY - ty; viewport.classList.add("grabbing"); });
+  window.addEventListener("mousemove", e => { if (!dragging) return; tx = e.clientX - sx; ty = e.clientY - sy; apply(); });
+  window.addEventListener("mouseup", () => { dragging = false; viewport.classList.remove("grabbing"); });
+  apply();
 }
 
 // ── Hacking ──────────────────────────────────────────────────────────────────

@@ -59,6 +59,7 @@
               <div class="view-tabs">
                 <button class="vtab active" data-view="jimple">Jimple</button>
                 <button class="vtab" data-view="cfg">Control flow</button>
+                <button class="vtab" data-view="callgraph">App call graph</button>
               </div>
               <div class="view-pane" data-viewpane="jimple">
                 <pre id="jimpleOut" class="jimple">Pick a class (and optionally a method) to view Jimple.</pre>
@@ -73,6 +74,22 @@
                   <span><i class="e-goto"></i> goto</span>
                   <span><i class="e-switch"></i> switch</span>
                   <span><i class="e-exc"></i> exception</span>
+                </div>
+              </div>
+              <div class="view-pane hidden" data-viewpane="callgraph">
+                <div class="cg-controls">
+                  <input type="text" id="cgPkg" class="search cg-pkg" placeholder="package prefix (blank = auto-detect app package)" />
+                  <label class="cg-cap">max nodes <input type="number" id="cgCap" value="400" min="20" max="2000" step="20" /></label>
+                  <button id="cgRenderBtn" class="secondary">Render</button>
+                </div>
+                <div class="cg-meta" id="cgMeta"></div>
+                <div id="cgWrap" class="cgwrap">
+                  <div class="hint">Whole-app call graph: methods are nodes, edges are calls. Scoped to the app's own package and capped for readability. Click <b>Render</b> (loads app classes first if needed).</div>
+                </div>
+                <div class="cfg-legend">
+                  <span><i class="n-dot init"></i> constructor/&lt;clinit&gt;</span>
+                  <span><i class="n-dot static"></i> static</span>
+                  <span><i class="n-dot method"></i> instance method</span>
                 </div>
               </div>
             </div>

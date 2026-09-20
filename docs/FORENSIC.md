@@ -5,8 +5,8 @@ Read-only inspection of an APK. Two features:
 1. **Static scan** — ad SDKs, Play Store traces, permissions, package metadata
    (`lib/inspector.js`).
 2. **Jimple & control-flow explorer** — decompile app classes to Soot's Jimple
-   IR and view a method's control-flow graph (`lib/jimple.js` +
-   `java/JimpleDumper.java`).
+   IR, view a method's control-flow graph, and view a **whole-app call graph**
+   (`lib/jimple.js` + `java/JimpleDumper.java`).
 
 Neither feature modifies the APK.
 
@@ -103,7 +103,8 @@ A single Soot program with four modes, all read-only
 | `--classes` | `<platforms> <apk>` | one **application** class name per line, sorted |
 | `--methods` | `… <class>` | one method per line: `<subsignature>\t<name>` |
 | `--jimple` | `… <class> [subsig]` | Jimple source: whole class, or one method |
-| `--cfg` | `… <class> <subsig>` | control-flow graph as JSON |
+| `--cfg` | `… <class> <subsig>` | intra-method control-flow graph as JSON |
+| `--callgraph` | `… [pkgPrefix] [maxNodes]` | whole-app call graph (methods → calls) as JSON |
 
 Soot is configured like the injector (phantom refs, no full resolver, single
 thread, ignore resolution errors) so obfuscated apps load without aborting.
@@ -162,9 +163,9 @@ reuses it), so the explorer inspects the real base APK, not the outer ZIP.
 ### The frontend (in `public/app.js`)
 
 - **Class list** (left) and **method list** (middle), each with a text filter.
-- **View pane** (right) toggles between **Jimple** text and the **Control flow**
-  graph.
-- `renderCfg(cfg)` draws the graph as an **SVG** with no external library:
+- **View pane** (right) has three tabs: **Jimple** text, **Control flow** (the
+  per-method CFG), and **App call graph** (the whole-app view below).
+- `renderCfg(cfg)` draws the CFG as an **SVG** with no external library:
   - assigns each node a depth by longest-path relaxation over the edges (capped
     to survive cycles/back-edges),
   - lays depths out top→bottom into rows,
@@ -174,3 +175,69 @@ reuses it), so the explorer inspects the real base APK, not the outer ZIP.
 
 It's a pragmatic layered layout — good enough for method-sized graphs and fully
 self-contained.
+
+---
+
+## 3. Whole-app call graph
+
+The per-method CFG shows control flow *inside* one method. The **call graph**
+shows control flow *across* the app: each **method** is a node and an edge
+`A → B` means A's body contains an invoke of B. This is the app-level "entire
+control flow" view.
+
+### Why it's scoped and capped
+
+A real app resolves to tens of thousands of application classes (the AI Enlarger
+sample: ~42,000, most of them bundled `androidx`/`kotlin` library code). A method
+call graph over all of that is neither renderable nor useful. So the call graph
+is always **scoped to a package** and **capped at a node count**:
+
+- **Scope** — a package prefix. If you don't supply one, `--callgraph`
+  **auto-detects the app's base package**: it counts application classes per
+  2- and 3-segment package, *ignoring* known library roots
+  (`androidx.`, `kotlin.`, `com.google.`, `io.`, `org.`, `retrofit2.`, …), and
+  picks the prefix with the widest coverage. For the sample this lands on
+  `com.app.aiimglarger`, not `androidx.compose`.
+- **Cap** — `maxNodes` (default 400). Methods are collected in deterministic
+  (class-name, then declaration) order until the cap; if more exist the result
+  is flagged `truncated: true` so the UI can tell you to narrow the package or
+  raise the cap.
+
+### How edges are built
+
+It's a **static, per-body invoke scan** — not a points-to/SPARK call graph.
+For each in-scope method, every `Stmt` that `containsInvokeExpr()` contributes an
+edge to the callee **if the callee is also an in-scope node** (edges to library
+or out-of-scope methods are dropped). Edges are deduplicated per `(from, to)`.
+This is fast, deterministic, and good enough to see the app's structure; it does
+not resolve virtual dispatch to all possible targets (it records the statically
+referenced method).
+
+### Output
+
+```jsonc
+{ "scope": "com.app.aiimglarger", "basePackage": "com.app.aiimglarger",
+  "nodeCount": 400, "edgeCount": 322, "truncated": true, "maxNodes": 400,
+  "nodes": [ { "id": 0, "label": "MainActivity.onCreate",
+               "cls": "com.app...MainActivity", "sub": "void onCreate(android.os.Bundle)",
+               "kind": "method" }, ... ],
+  "edges": [ { "from": 5, "to": 42 }, ... ] }
+```
+
+Node `kind` ∈ `init` (`<init>`/`<clinit>`), `static`, `method` — the UI colors
+nodes by kind.
+
+### The frontend
+
+- The **App call graph** tab has its own controls: a **package prefix** input
+  (blank = auto-detect), a **max nodes** cap, and a **Render** button (the call
+  graph is heavier than a single CFG, so it's on-demand, not auto-loaded). After
+  rendering, the detected package is filled back into the input so you can see
+  and refine the scope.
+- `renderCallGraph(cg)` uses the same layered SVG approach as the CFG, but the
+  graph is a general (often cyclic) digraph, so levels come from longest-path
+  relaxation with a pass cap, and back-edges are drawn as dashed curves routed to
+  the right.
+- The viewport supports **drag to pan** and **wheel to zoom** (`attachPanZoom`),
+  and **clicking a node jumps to that method's Jimple** (switches to the Jimple
+  tab and loads it). All self-contained — no graph library.

@@ -185,6 +185,16 @@ app.post("/api/cfg", (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Whole-app call graph (methods as nodes, calls as edges). Scoped to a package
+// (default: the app's auto-detected base package) and capped for renderability.
+app.post("/api/callgraph", (req, res) => {
+  const { jobId, file, pkgPrefix, maxNodes } = req.body || {};
+  const apk = resolveSootApk(jobId, file);
+  if (!apk) return res.status(400).json({ error: "APK not found for job" });
+  try { res.json(jimpleLib.callGraph(apk, pkgPrefix, maxNodes)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // HACKING (inject) — async, streams to SSE.
 app.post("/api/inject", (req, res) => {
   const { jobId, file, injectAll = true, patterns = [] } = req.body || {};

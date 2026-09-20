@@ -400,3 +400,86 @@ chip in the UI; when absent, `/api/decompile` returns **501** with
 flow: **Load classes** populates a searchable picker; clicking a class fetches
 its Java into a monospace pane, tagged with the engine and a `cached` marker. A
 jadx-missing response is caught and rendered inline with install guidance.
+
+---
+
+## Suspicious app code (DroidLysis)
+
+The **🧪 Suspicious App Code** tab (`lib/droidlysis.js`, route
+`POST /api/droidlysis`) runs [DroidLysis](https://github.com/cryptax/droidlysis)
+over the uploaded APK/XAPK and presents its property extraction.
+
+Where the Malware tab applies *our* signatures to the DEX strings, DroidLysis
+brings its own, much larger rule set and applies it to three separate layers:
+
+| Layer | What it matches | Rule file |
+|---|---|---|
+| `smali` | disassembled Smali code | `conf/smali.conf` |
+| `wide` | the app's raw contents & strings | `conf/wide.conf` |
+| `arm` | native ARM code in `lib/*.so` | `conf/arm.conf` |
+| `kit` | bundled 3rd-party ad/analytics/dev SDKs | `conf/kit.conf` |
+
+Each rule is a config section that either fires or doesn't, so DroidLysis'
+`report.json` is mostly a large set of booleans. `lib/droidlysis.js` makes that
+readable:
+
+- **Keeps only what fired** — every `false` property is dropped.
+- **Re-attaches the explanation** — `parseConf()` reads the `description=` and
+  `pattern=` back out of the `conf/*.conf` files, so each hit says *why* it
+  matters instead of showing a bare rule name like `accessibility_service`.
+- **Groups by concern** — `CATEGORY_RULES` sorts hits into "Evasion &
+  anti-analysis", "Dynamic code & packing", "Device & user surveillance",
+  "Privilege & persistence", "Network & exfiltration" and "Device identity &
+  fingerprint". This ordering is **ours, not DroidLysis'** — the tool ranks
+  nothing, every rule is equal to it.
+- **Separates values from flags** — `urls`, `phonenumbers`, `base64_strings`,
+  `app_name` and `multidex` carry data rather than a yes/no, so they're
+  surfaced in their own cards.
+
+### Async + cached
+
+A full run unpacks the APK, disassembles every DEX and scans the native libs,
+which is far too slow for a synchronous request — and on a large multi-dex app
+leaves roughly a gigabyte of Smali and extracted resources behind, so
+`pruneIntermediates()` deletes them once the report is shaped, keeping only the
+reports themselves. The route follows the inject
+pattern: it returns `{ started:true }` immediately, streams the tool's own
+output over SSE, and delivers the finished report on the `done` event
+(`kind:"droidlysis"`). The shaped report is cached at
+`uploads/<jobId>/.droidlysis/sootsleuth-report.json`; re-opening the tab serves
+it instantly, and **Re-run (ignore cache)** forces a fresh analysis.
+
+### Optional tool, and the degradation trap
+
+DroidLysis is optional, like jadx: `findDroidlysis()` looks for the pip-installed
+launcher and `/api/droidlysis` answers **501** `code:"NO_DROIDLYSIS"` when it's
+absent, which the tab renders as an install hint.
+
+The subtler problem is that DroidLysis **degrades silently**. It shells out to
+apktool, baksmali and dex2jar, whose paths live in its `general.conf` — and the
+shipped defaults (`~/softs/...`) are wrong on virtually every machine. When they
+are missing DroidLysis still exits cleanly and still writes a `report.json`; it
+just never disassembled anything. The result is a report with zero Smali hits,
+zero ARM hits and an unparsed manifest, which reads exactly like a clean app.
+
+`droidlysisBackends()` in `lib/tools.js` therefore parses `general.conf`, checks
+each tool path, and the report carries `degraded` / `degradedMissing` /
+`degradedSkipped`. The frontend leads with a warning banner stating which layers
+were **skipped, not cleared**. Severity is proportional: `degraded` is set only
+when apktool/baksmali are missing (no disassembly at all), while a missing
+dex2jar sets `degradedMinor` and renders as a one-line footnote — so the loud
+banner keeps its meaning. One flag gets special handling: `packed` is
+derived by DroidLysis from "no main activity + dynamic DEX loading", and its
+first half is trivially true when the manifest was never parsed — so a degraded
+run forces `packed` to `null` (unknown) rather than reporting a packer that was
+never actually detected.
+
+### The frontend
+
+`runDroidlysis` / `renderDroidlysis` in `public/app.js`. **Run DroidLysis**
+starts the job and progress streams to the console; `onDone` routes the
+`droidlysis` payload to the renderer. The report renders as a summary card
+(package, components, property counts, notable flags), the degradation banner
+when applicable, one card per behavior category with each hit's rule name,
+layer tag and description, then URLs / phone numbers / Base64 strings, the
+recognised third-party kits, and the permission list.

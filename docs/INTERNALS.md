@@ -17,6 +17,22 @@ Everything OS-specific lives here so the rest of the code is platform-agnostic.
 - `findJadx()` — PATH (`jadx` / `jadx.bat`), then `JADX_HOME/bin`, then common
   install dirs (`/opt/jadx`, `~/.local/jadx`, Homebrew libexec, …). Optional; its
   absence only disables the decompiled-Java view.
+- `findDroidlysis()` — PATH, then the pip bin dirs (`~/.local/bin`, the Windows
+  `Scripts` dir, …) and `DROIDLYSIS_HOME`. Optional; its absence only disables
+  the Suspicious App Code tab.
+- `findDroidlysisConfig()` — the `conf/` holding `general.conf` and the
+  `smali`/`wide`/`arm`/`kit` rule files: `DROIDLYSIS_CONF` →
+  `DROIDLYSIS_HOME/conf` → `~/.config/droidlysis` → `/etc/droidlysis` → next to
+  the installed package (located by importing `droidconfig`, since pip lays the
+  modules out flat in site-packages with `conf/` as a sibling). Needed both to
+  pass `--config` explicitly — DroidLysis otherwise resolves it relative to the
+  *current directory* — and to read each rule's `description=` for the UI.
+- `droidlysisBackends()` — parses `general.conf` and checks whether the
+  apktool / baksmali / dex2jar paths it names actually exist. DroidLysis does
+  **not** fail when they're missing: it still exits 0 and still writes a report,
+  having silently skipped disassembly and manifest parsing. Without this check a
+  hollow result is indistinguishable from a clean app. See
+  [FORENSIC.md → Suspicious app code](FORENSIC.md#suspicious-app-code-droidlysis).
 - `findBuildTool(name)` — newest `build-tools/<ver>/` binary; knows `apksigner`
   is a `.bat` on Windows while `zipalign`/`aapt2` are `.exe`.
 - `findAndroidPlatforms()` — first SDK root with a non-empty `platforms/`; falls

@@ -32,13 +32,19 @@ Server-Sent Events (SSE).
   strings          zipalign/apksigner
 ```
 
-## The two modes
+## The modes
 
 | Mode | Endpoints | Backing code | Writes the APK? |
 |---|---|---|---|
 | **Forensic** | `/api/inspect`, `/api/files`, `/api/file`, `/api/classes`, `/api/methods`, `/api/jimple`, `/api/cfg`, `/api/callgraph` | `lib/inspector.js`, `lib/files.js`, `lib/jimple.js` + `java/JimpleDumper.java` | No — read-only |
 | **Malware analysis** | `/api/malware`, `/api/decompile` (+ `/api/classes` for the picker) | `lib/malware.js`, `lib/decompile.js` (jadx) | No — read-only |
+| **Suspicious app code** | `/api/droidlysis` | `lib/droidlysis.js` (DroidLysis) | No — read-only |
 | **Hacking** | `/api/inject`, `/api/instrument` | `lib/injector.js` + `java/LogInjector.java` + `java/DexSplicer.java`, `lib/instrument.js` | Yes — produces a signed injected APK/bundle |
+
+The three read-only modes differ in what they apply: Forensic reports the app's
+own structure, Malware analysis applies *our* signatures to the DEX strings, and
+Suspicious app code delegates to DroidLysis' much larger external rule set over
+disassembled Smali, raw contents and native ARM code.
 
 ## Two response styles
 
@@ -46,10 +52,12 @@ Server-Sent Events (SSE).
    full result in the HTTP response. They're fast enough (inspection is seconds;
    a Jimple/CFG call is one short Soot run, memoised after the first).
 
-2. **Async job + SSE** — `/api/inject` and `/api/instrument` can run for minutes
-   and produce lots of progress output. They return immediately with
-   `{ started: true }`, do the work in the background, and push every log line to
-   the browser over `/api/stream/:jobId`. See
+2. **Async job + SSE** — `/api/inject`, `/api/instrument` and `/api/droidlysis`
+   can run for minutes and produce lots of progress output. They return
+   immediately with `{ started: true }`, do the work in the background, and push
+   every log line to the browser over `/api/stream/:jobId`; the finished result
+   arrives on the `done` event. (`/api/droidlysis` answers from its per-job cache
+   synchronously when one exists, so only a fresh run goes async.) See
    [INTERNALS.md → Job registry & SSE](INTERNALS.md#job-registry--sse).
 
 ## A request end-to-end (inject example)
@@ -79,6 +87,8 @@ lib/
   files.js         Forensic APK file browser (tree + AXML/arsc/text/hex reads)
   malware.js       Malware triage (hashes, perms, behavior sigs, IOCs, score)
   decompile.js     Malware decompiled-Java view (jadx --single-class, cached)
+  droidlysis.js    Suspicious-app-code tab: runs DroidLysis, shapes its
+                   report.json, re-attaches rule descriptions from conf/*.conf
   jimple.js        Forensic Jimple IR + CFG (wraps JimpleDumper.java)
   injector.js      Inject pipeline: compile → Soot → dex-splice → sign
   bundle.js        XAPK/.apks unpack + repack (CLI or pure-JS)
@@ -88,7 +98,7 @@ java/
   DexSplicer.java  dexlib2 splice: keep untouched dex byte-for-byte
   JimpleDumper.java Read-only Jimple/CFG dumper for the forensic explorer
 public/
-  index.html       Drop zone, two tabs, explorer, console
+  index.html       Drop zone, mode tabs, explorer, console
   app.js           Upload, SSE, forensic explorer + SVG CFG renderer
   style.css        Dark UI theme
 jar_libs/          Soot 4.7.1, dexlib2, ASM, Guava, protobuf, … (classpath)

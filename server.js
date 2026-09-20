@@ -3,8 +3,10 @@
  * SootSleuth — web server
  *
  * Two modes over one uploaded APK:
- *   FORENSIC — static inspection (ad SDKs, Play traces, manifest, metadata)
- *   HACKING  — Soot log injection (+ optional on-device instrumentation)
+ *   FORENSIC   — static inspection (ad SDKs, Play traces, manifest, metadata)
+ *   MALWARE    — static triage, decompiled Java
+ *   SUSPICIOUS — DroidLysis property extraction over the app's code
+ *   HACKING    — Soot log injection (+ optional on-device instrumentation)
  *
  * Long-running jobs (inject/instrument) stream their output to the browser over
  * Server-Sent Events keyed by a jobId. Cross-platform: pure Node + a JDK; the
@@ -22,6 +24,7 @@ const { inspectApk } = require("./lib/inspector");
 const { analyzeApk } = require("./lib/malware");
 const { listApkFiles, readApkFile } = require("./lib/files");
 const { decompileClass } = require("./lib/decompile");
+const droidlysisLib = require("./lib/droidlysis");
 const jimpleLib = require("./lib/jimple");
 const { inject } = require("./lib/injector");
 const { instrument, listDevices } = require("./lib/instrument");
@@ -165,6 +168,40 @@ app.post("/api/file", (req, res) => {
   if (!entry || typeof entry !== "string") return res.status(400).json({ error: "entry required" });
   try { res.json(readApkFile(apk, entry)); }
   catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// SUSPICIOUS APP CODE — DroidLysis property extraction. Slow (full unpack +
+// disassembly), so it's async: the response returns immediately and progress
+// streams over SSE, like inject. Results are cached per job.
+app.post("/api/droidlysis", (req, res) => {
+  const { jobId, file, refresh = false } = req.body || {};
+  const apk = resolveApk(jobId, file);
+  if (!apk) return res.status(400).json({ error: "APK not found for job" });
+
+  if (!droidlysisLib.available()) {
+    return res.status(501).json({
+      error: "DroidLysis not found — install it with `pip3 install droidlysis` (see docs/SETUP.md).",
+      code: "NO_DROIDLYSIS",
+    });
+  }
+
+  // Serve the cached report unless the caller explicitly asked to re-run.
+  if (!refresh) {
+    const hit = droidlysisLib.cached(apk);
+    if (hit) return res.json({ started: false, report: hit });
+  }
+
+  const log = (line, stream) => pushLine(jobId, line, stream);
+  res.json({ jobId, started: true });
+
+  droidlysisLib.analyze({ apkPath: apk, log })
+    // jobId travels with the payload so the UI can ignore a result whose APK is
+    // no longer the one loaded.
+    .then(report => finishJob(jobId, { kind: "droidlysis", jobId, ok: true, report }))
+    .catch(e => {
+      log("FATAL: " + e.message, "err");
+      finishJob(jobId, { kind: "droidlysis", jobId, ok: false, error: e.message, code: e.code || null });
+    });
 });
 
 // FORENSIC — Jimple IR + control-flow graph (read-only Soot).

@@ -30,6 +30,7 @@
       <div class="tabs">
         <button class="tab active" data-mode="forensic">🕵️ Forensic mode</button>
         <button class="tab" data-mode="malware">🦠 Malware analysis</button>
+        <button class="tab" data-mode="suspicious">🧪 Suspicious App Code</button>
         <button class="tab" data-mode="hacking">💉 Hacking mode</button>
       </div>
 
@@ -150,6 +151,19 @@
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- Suspicious app code (DroidLysis) -->
+      <div class="panel" data-panel="suspicious">
+        <p class="panel-desc">Investigate the suspicious APK/XAPK with <b>DroidLysis</b>: it unpacks the app, disassembles every DEX to Smali, and pattern-matches the code, raw strings and native ARM libraries against its rule sets — surfacing anti-emulator &amp; anti-debug tricks, dynamic code loading, SMS/call interception, device fingerprinting and more. Each hit is shown with the rule that fired and why it matters. Read-only; nothing is executed.</p>
+
+        <div class="btnrow">
+          <button id="droidBtn" class="primary">Run DroidLysis</button>
+          <button id="droidRerunBtn" class="secondary" hidden>Re-run (ignore cache)</button>
+        </div>
+        <p class="hint" id="droidHint">Slow on large apps — unpacking and disassembly run over the whole APK. Progress streams to the console below.</p>
+
+        <div id="droidResult" class="result"></div>
       </div>
 
       <!-- Hacking -->

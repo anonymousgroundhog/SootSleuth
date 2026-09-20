@@ -289,3 +289,36 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .col-decompview .fileout { flex: 1; max-height: none; }
 .java-src { tab-size: 4; }
 @media (max-width: 700px) { .decomp-pickers { grid-template-columns: 1fr; height: auto; } .decomp-pickers .col-classes { height: 220px; } .col-decompview .fileout { height: 420px; } }
+
+/* ── Suspicious app code (DroidLysis) ──────────────────────────────────────── */
+.dl-hits {
+  display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+.dl-hit {
+  padding: 8px 10px; border-radius: 6px;
+  border: 1px solid var(--border); background: #0c1017;
+}
+.dl-hit-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dl-name { font-weight: 600; font-size: 14px; font-family: var(--mono); overflow-wrap: anywhere; }
+.dl-why { color: var(--muted); font-size: 13px; margin-top: 3px; }
+.dl-pattern {
+  display: block; margin-top: 6px; font-size: 11.5px; color: var(--muted);
+  background: #090d13; overflow-wrap: anywhere;
+}
+/* Which layer a property matched in: code, raw contents, or native libs. */
+.tag.src.smali { color: var(--accent); border-color: #24405e; }
+.tag.src.wide  { color: var(--accent2); border-color: #3c2f66; }
+.tag.src.arm   { color: var(--warn); border-color: #6a4a1e; }
+
+.dl-flags { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.dl-flag { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.dl-flag .dl-why { margin-top: 0; }
+
+@media (max-width: 600px) { .dl-hits { grid-template-columns: 1fr; } }
+.dl-degraded { border-color: #6a4a1e; background: #1c1710; }
+.dl-degraded h3 { color: var(--warn); }
+.dl-degraded p { font-size: 13.5px; margin: 8px 0; }
+/* Scoped: the global .note-list above is shared with the malware panel. */
+.dl-degraded .note-list li { color: var(--warn); margin: 3px 0; }
+.dl-minor { margin: 10px 0 0; }

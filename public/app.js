@@ -10,7 +10,8 @@ async function loadTools() {
     const chips = [
       ["java", tools.java], ["javac", tools.javac], ["Android SDK", tools.platforms],
       ["adb", tools.adb], ["zipalign", tools.zipalign], ["apksigner", tools.apksigner],
-      ["jadx", tools.jadx], ["jars", tools.jarLibsExist], ["injector", tools.injectorCompiled],
+      ["jadx", tools.jadx], ["droidlysis", tools.droidlysis],
+      ["jars", tools.jarLibsExist], ["injector", tools.injectorCompiled],
     ];
     $("#toolbar").innerHTML = chips.map(([n, on]) =>
       `<span class="chip ${on ? "on" : "off"}">${on ? "✓" : "✕"} ${n}</span>`).join("");
@@ -75,6 +76,7 @@ function appendLog({ text, stream }) {
 }
 function onDone(payload) {
   appendLog({ text: `── job finished (${payload.kind || ""}${payload.ok === false ? ", FAILED" : ""}) ──`, stream: "sys" });
+  if (payload.kind === "droidlysis") onDroidlysisDone(payload);
   if (payload.kind === "inject" && payload.ok) {
     state.hasOutput = true;
     if ($("#instrumentBtn").dataset.adb === "1") $("#instrumentBtn").disabled = false;
@@ -241,6 +243,175 @@ function renderMalware(d) {
     </div>` : ""}`;
   $("#malwareResult").innerHTML = "";
   $("#malwareResult").appendChild(el);
+}
+
+// ── Suspicious app code (DroidLysis) ─────────────────────────────────────────
+// DroidLysis is slow, so /api/droidlysis is async: it returns { started: true }
+// and the report arrives on the SSE "done" event (see onDone). A cached run
+// comes straight back in the POST response instead.
+// `jobId` records which upload the in-flight run belongs to, so a `done` event
+// from a previous APK can't render into the tab after a new upload.
+const dl = { running: false, report: null, jobId: null };
+
+function resetDroid() {
+  dl.running = false; dl.report = null; dl.jobId = null;
+  $("#droidResult").innerHTML = "";
+  $("#droidBtn").disabled = false;
+  $("#droidBtn").textContent = "Run DroidLysis";
+  $("#droidRerunBtn").hidden = true;
+  $("#droidHint").textContent = "Slow on large apps — unpacking and disassembly run over the whole APK. Progress streams to the console below.";
+}
+
+async function runDroidlysis(refresh) {
+  if (!state.jobId || dl.running) return;
+  dl.running = true;
+  dl.jobId = state.jobId;
+  $("#droidBtn").disabled = true;
+  $("#droidRerunBtn").hidden = true;
+  $("#droidHint").textContent = refresh
+    ? "Re-running DroidLysis from scratch…"
+    : "Running DroidLysis — unpacking, disassembling and pattern-matching…";
+  $("#droidResult").innerHTML = `<div class="hint">Analyzing with DroidLysis… watch the console below for progress.</div>`;
+  try {
+    const d = await api("/api/droidlysis", { refresh });
+    if (d.started) return;            // result arrives via SSE "done"
+    dl.running = false;
+    $("#droidBtn").disabled = false;
+    renderDroidlysis(d.report);       // cached hit
+  } catch (e) {
+    dl.running = false;
+    $("#droidBtn").disabled = false;
+    $("#droidHint").textContent = "DroidLysis unavailable.";
+    $("#droidResult").innerHTML =
+      `<div class="card"><h3>DroidLysis not available</h3>
+        <div class="f err">${esc(e.message)}</div>
+        <p class="hint">Install it with <code>pip3 install droidlysis</code>. It also needs its
+        unpacking tools (apktool, baksmali, dex2jar) configured in <code>general.conf</code> —
+        see <code>docs/SETUP.md</code>. The Malware analysis tab works without it.</p>
+      </div>`;
+  }
+}
+
+$("#droidBtn").onclick = () => runDroidlysis(false);
+$("#droidRerunBtn").onclick = () => runDroidlysis(true);
+
+// Called from onDone when a droidlysis job finishes.
+function onDroidlysisDone(payload) {
+  // Ignore a result for an APK that is no longer loaded (a new upload reset the
+  // tab while this run was still going).
+  if (payload.jobId && dl.jobId && payload.jobId !== dl.jobId) return;
+  dl.running = false;
+  $("#droidBtn").disabled = false;
+  if (payload.ok && payload.report) return renderDroidlysis(payload.report);
+  $("#droidHint").textContent = "DroidLysis failed.";
+  $("#droidResult").innerHTML =
+    `<div class="card"><h3>DroidLysis failed</h3>
+      <div class="f err">${esc(payload.error || "unknown error")}</div>
+      <p class="hint">The console above has the tool's own output.</p></div>`;
+}
+
+function renderDroidlysis(d) {
+  dl.report = d;
+  $("#droidBtn").textContent = "Run DroidLysis";
+  $("#droidRerunBtn").hidden = false;
+  $("#droidHint").textContent =
+    `${d.counts.total} properties detected across ${d.categories.length} categories` +
+    (d.cached ? " · cached result" : "") +
+    (d.confFound ? "" : " · rule descriptions unavailable (conf/ not found)");
+
+  // An incomplete run must never read as a clean bill of health: when
+  // DroidLysis' unpacking tools are missing it skips whole analysis layers and
+  // still reports zero hits for them.
+  const degradedBanner = d.degraded ? `
+    <div class="card dl-degraded">
+      <h3>⚠ Incomplete analysis — results are not conclusive</h3>
+      <p>DroidLysis ran without <b>${d.degradedMissing.map(esc).join(", ")}</b>, which it needs to unpack
+      and disassemble the app. These layers were <b>skipped, not cleared</b>:</p>
+      <ul class="note-list">${d.degradedSkipped.map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+      <p class="hint">Only raw-string ("wide") matching ran, so a low hit count here means
+      <em>not inspected</em>, not <em>not suspicious</em>. Install apktool, baksmali and dex2jar, point
+      <code>general.conf</code> at them, then <b>Re-run</b>. See <code>docs/SETUP.md</code>.</p>
+    </div>`
+    // Something was missing, but no code-analysis layer was lost — a footnote,
+    // not a warning, so the real banner keeps its weight.
+    : d.degradedMinor ? `
+    <p class="hint dl-minor">Note: ${d.degradedMissing.map(esc).join(", ")} not installed —
+    ${d.degradedSkipped.map(esc).join(", ")} was skipped. Code analysis was unaffected.</p>` : "";
+
+  const hitCard = h => `
+    <div class="dl-hit">
+      <div class="dl-hit-head">
+        <span class="dl-name">${esc(h.name)}</span>
+        <span class="tag src ${h.group}" title="${h.group === "smali" ? "matched in disassembled Smali code"
+          : h.group === "wide" ? "matched in the app's raw contents/strings"
+          : "matched in native ARM code"}">${esc(h.group)}</span>
+      </div>
+      ${h.why ? `<div class="dl-why">${esc(h.why)}</div>` : ""}
+      ${h.pattern ? `<code class="dl-pattern" title="the rule's match pattern">${esc(h.pattern)}</code>` : ""}
+      ${h.values ? `<div class="ioc-list">${h.values.map(v => `<code class="ioc">${esc(v)}</code>`).join("")}</div>` : ""}
+    </div>`;
+
+  const catCards = d.categories.length
+    ? d.categories.map(c => `
+        <div class="card">
+          <h3>${esc(c.name)} <span class="tag hits">${c.hits.length}</span></h3>
+          <div class="dl-hits">${c.hits.map(hitCard).join("")}</div>
+        </div>`).join("")
+    : `<div class="card"><span class="hint">DroidLysis matched no code properties in this app.</span></div>`;
+
+  const list = (arr, cls) => arr.length
+    ? `<div class="ioc-list">${arr.map(x => `<code class="ioc ${cls || ""}">${esc(x)}</code>`).join("")}</div>`
+    : `<span class="hint">none found</span>`;
+
+  const m = d.manifest || {};
+  const st = d.strings || {};
+  const flags = [
+    // null (not false) when the run was degraded — unknown, so show nothing.
+    d.packed === true && ["packed", "No main activity, but the app loads DEX dynamically — typical of a packer."],
+    m.listensIncomingSms && ["listens to incoming SMS", "A receiver is registered for incoming SMS — used for OTP theft."],
+    m.listensOutgoingCall && ["listens to outgoing calls", "A receiver is registered for outgoing calls."],
+    st.apkZipUrl && ["references an APK/ZIP URL", "Strings point at a downloadable APK or ZIP — possible second-stage payload."],
+  ].filter(Boolean);
+
+  $("#droidResult").innerHTML = `
+    ${degradedBanner}
+    <div class="card">
+      <h3>DroidLysis summary</h3>
+      <div class="kv">
+        <span class="k">Package</span><span>${esc(m.package || (d.degraded ? "— (manifest not parsed)" : "—"))}</span>
+        <span class="k">Main activity</span><span>${esc(m.mainActivity || (d.degraded ? "— (manifest not parsed)" : "—"))}</span>
+        <span class="k">App name</span><span>${esc(st.appName || "—")}</span>
+        <span class="k">SDK</span><span>min ${esc(m.minSdk || "—")} · target ${esc(m.targetSdk || "—")}</span>
+        <span class="k">Classes / dirs</span><span>${d.file.classes} classes · ${d.file.dirs} dirs</span>
+        <span class="k">Properties</span><span>${d.counts.total} total — ${d.counts.smali} smali · ${d.counts.wide} wide · ${d.counts.arm} arm</span>
+        <span class="k">Components</span><span>${m.activities.length} activities · ${m.services.length} services · ${m.receivers.length} receivers · ${m.providers.length} providers</span>
+      </div>
+      ${flags.length ? `<div class="dl-flags">${flags.map(([name, why]) =>
+        `<div class="dl-flag"><span class="badge ad">${esc(name)}</span><span class="dl-why">${esc(why)}</span></div>`).join("")}</div>` : ""}
+      ${d.multidex.length ? `<p class="hint">multidex: ${d.multidex.map(esc).join(", ")}</p>` : ""}
+    </div>
+
+    ${catCards}
+
+    <div class="card"><h3>URLs in the app (${st.urls.length})</h3>${list(st.urls, "url")}</div>
+    ${st.phoneNumbers.length ? `<div class="card"><h3>Phone numbers (${st.phoneNumbers.length})</h3>${list(st.phoneNumbers)}</div>` : ""}
+    ${st.base64.length ? `<div class="card"><h3>Base64 strings (${st.base64.length})</h3>
+      <p class="hint">Often used to hide payloads, URLs or commands from plain-string scanning.</p>${list(st.base64)}</div>` : ""}
+
+    <div class="card"><h3>Third-party kits (${d.kits.length})</h3>
+      <p class="hint">Ad, analytics and developer SDKs DroidLysis recognises. Their namespaces are excluded from the code searches above, so these are context — not hits.</p>
+      ${d.kits.length
+        ? `<div class="dl-hits">${d.kits.map(k =>
+            `<div class="dl-hit"><div class="dl-hit-head"><span class="dl-name">${esc(k.name)}</span></div>${
+              k.why ? `<div class="dl-why">${esc(k.why)}</div>` : ""}</div>`).join("")}</div>`
+        : `<span class="hint">none detected</span>`}
+    </div>
+
+    <div class="card"><h3>Permissions (${m.permissions.length})</h3>
+      ${m.permissions.length
+        ? `<div class="perm-list">${m.permissions.map(p => `<span class="perm">${esc(p)}</span>`).join("")}</div>`
+        : `<span class="hint">none requested</span>`}
+    </div>`;
 }
 
 // ── Forensic: APK file browser ────────────────────────────────────────────────
@@ -423,6 +594,7 @@ function resetExplorer() {
   $("#explorerHint").textContent = "Decompile app classes to Soot's Jimple IR and view a method's control-flow graph.";
   resetFiles();
   resetDecomp();
+  resetDroid();
 }
 
 async function api(url, body) {

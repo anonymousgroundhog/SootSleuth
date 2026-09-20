@@ -32,6 +32,19 @@ Drag an APK into the browser and either investigate it or instrument it.
   pick an app class → view its source decompiled by **jadx** (optional tool;
   falls back to a clear notice, with Jimple IR always available in Forensic
   mode). See [docs/FORENSIC.md](docs/FORENSIC.md).
+- **🧪 Suspicious App Code** — investigate a suspicious APK/XAPK with
+  **[DroidLysis](https://github.com/cryptax/droidlysis)**: it unpacks the app,
+  disassembles every DEX to Smali, and pattern-matches the code, the raw
+  strings and the native ARM libraries against its rule sets. Hits are grouped
+  by concern (evasion & anti-analysis, dynamic code & packing, device & user
+  surveillance, privilege & persistence, network & exfiltration, device
+  fingerprinting), and each one is shown with the rule that fired **and why it
+  matters** — the descriptions are read back out of DroidLysis' own config, so
+  a hit explains itself instead of being a bare rule name. Also surfaces URLs,
+  phone numbers and Base64 blobs found in the app, plus the third-party
+  ad/analytics SDKs it recognises. Optional tool; when it (or its unpacking
+  tools) are missing, the tab says so rather than reporting a hollow result as
+  a clean one. Read-only; nothing is executed.
 - **💉 Hacking** — inject `Log.d("SootInjection", "Entering: <method sig>")` at
   the start of every targeted method via Soot (`LogInjector.java`), then
   zipalign + apksign the result. Optionally install the injected APK on a
@@ -45,7 +58,7 @@ The README is the overview. Detailed, code-level docs live in [`docs/`](docs/):
 |---|---|
 | [docs/SETUP.md](docs/SETUP.md) | **Setup from scratch** (Windows/macOS/Linux): JDK + Node, the Android SDK, where the platform JARs live for Soot, installing `apksigner`/`zipalign`, and preparing a device |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the pieces fit; request flow; sync vs async+SSE; directory layout; design choices |
-| [docs/FORENSIC.md](docs/FORENSIC.md) | The static scan (`inspector.js`), the Jimple/CFG explorer (`jimple.js` + `JimpleDumper.java`), the APK file browser (`files.js`), the malware triage (`malware.js`), and the jadx decompiled-Java view (`decompile.js`) |
+| [docs/FORENSIC.md](docs/FORENSIC.md) | The static scan (`inspector.js`), the Jimple/CFG explorer (`jimple.js` + `JimpleDumper.java`), the APK file browser (`files.js`), the malware triage (`malware.js`), the jadx decompiled-Java view (`decompile.js`), and the DroidLysis suspicious-code tab (`droidlysis.js`) |
 | [docs/INJECTION.md](docs/INJECTION.md) | The full inject pipeline: `LogInjector` → `DexSplicer` (VerifyError fix) → signing → XAPK bundles → on-device instrument |
 | [docs/API.md](docs/API.md) | Every HTTP endpoint with request/response shapes |
 | [docs/INTERNALS.md](docs/INTERNALS.md) | Cross-platform tool discovery, the subprocess runner, the job/SSE registry, the frontend, building the Java helpers |

@@ -29,6 +29,7 @@ instrument step.
 | **`zipalign` + `apksigner`** | Sign the injected APK so it installs | newest `build-tools/<ver>/` |
 | **`adb`** + a device | On-device instrument (optional) | `platform-tools/`, then `PATH` |
 | **`jadx`** | Decompiled-Java view in Malware mode (optional) | `PATH`, `JADX_HOME/bin`, or common install dirs |
+| **`droidlysis`** | Suspicious App Code tab (optional) | `PATH`, pip bin dirs, or `DROIDLYSIS_HOME` |
 | `unzip` / `strings` | Faster forensic scan (optional) | `PATH` — pure-JS fallback otherwise |
 
 The repo's `jar_libs/` already contains Soot 4.7.1 and its dependencies, so you
@@ -304,6 +305,88 @@ The Windows launcher is `bin\jadx.bat`; `findJadx` looks for it under `PATH` and
 
 > Restart `npm start` after installing jadx so the server re-checks tools and the
 > chip flips to green.
+
+## Installing DroidLysis (optional — for the Suspicious App Code tab)
+
+The **🧪 Suspicious App Code** tab uses
+[DroidLysis](https://github.com/cryptax/droidlysis) to unpack the app,
+disassemble its DEX to Smali and pattern-match the code, raw strings and native
+libraries against its own rule sets. Without it the tab shows an install notice;
+the Malware analysis tab works regardless.
+
+```bash
+pip3 install droidlysis
+droidlysis --help          # confirm the launcher is on your PATH
+```
+
+SootSleuth finds the launcher via `findDroidlysis()` (`PATH`, `~/.local/bin`,
+the Windows `Scripts` dir, or `DROIDLYSIS_HOME`) and the `droidlysis` chip turns
+green once it's found.
+
+### Also install its unpacking tools — this part is easy to miss
+
+DroidLysis shells out to **apktool**, **baksmali** and **dex2jar**, and reads
+their paths from its `general.conf`. The shipped defaults point at
+`~/softs/...`, which won't exist on a fresh install.
+
+This matters more than a normal missing-dependency: **DroidLysis does not fail
+when they're absent.** It exits cleanly and still writes a report — it just
+silently skips Smali disassembly and manifest parsing, producing a result with
+zero code hits that looks indistinguishable from a clean app. SootSleuth detects
+this and shows a warning banner naming the skipped layers, but you want the real
+analysis:
+
+```bash
+mkdir -p ~/softs
+
+# apktool (the official standalone jar — distro packages ship library jars
+# without a main manifest, which DroidLysis cannot run)
+curl -L -o ~/softs/apktool.jar \
+  https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+
+# baksmali (the "fat" jar — the Maven artifact is not self-executable)
+curl -L -o ~/softs/baksmali.jar \
+  https://bitbucket.org/JesusFreke/smali/downloads/baksmali-2.5.2.jar
+
+# verify both actually run
+java -jar ~/softs/apktool.jar --version
+java -jar ~/softs/baksmali.jar --version
+
+# dex2jar (only needed for DroidLysis' DEX→JAR step)
+curl -L -o /tmp/dex-tools.zip \
+  https://github.com/pxb1988/dex2jar/releases/download/v2.4/dex-tools-v2.4.zip
+unzip -q /tmp/dex-tools.zip -d ~/softs
+chmod +x ~/softs/dex-tools-v2.4/*.sh
+```
+
+Then point DroidLysis' config at them. Copy the shipped config somewhere it
+searches — `~/.config/droidlysis/` is the cleanest choice, and SootSleuth looks
+there first:
+
+```bash
+mkdir -p ~/.config/droidlysis
+cp "$(python3 -c "import importlib.util,os;print(os.path.dirname(importlib.util.find_spec('droidconfig').origin))")"/conf/*.conf \
+   ~/.config/droidlysis/
+```
+
+Edit `~/.config/droidlysis/general.conf` so the `[tools]` paths resolve:
+
+```ini
+[tools]
+apktool = ~/softs/apktool.jar
+baksmali = ~/softs/baksmali.jar
+dex2jar = ~/softs/dex-tools-v2.4/d2j-dex2jar.sh
+keytool = /usr/bin/keytool
+```
+
+SootSleuth resolves the config itself (`findDroidlysisConfig()`), searching
+`DROIDLYSIS_CONF` → `DROIDLYSIS_HOME/conf` → `~/.config/droidlysis` →
+`/etc/droidlysis` → the installed package's own `conf/`, and passes it
+explicitly with `--config` (DroidLysis would otherwise resolve it relative to
+the current directory). The `droidlysisConf` field in `GET /api/tools` reports
+whether it was found.
+
+> Restart `npm start` after installing so the server re-checks tools.
 
 ## Preparing an Android device (optional — for on-device instrument)
 

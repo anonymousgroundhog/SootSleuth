@@ -41,7 +41,12 @@ import java.util.*;
  *         app's auto-detected base package); maxNodes caps the graph so a huge
  *         app stays renderable (default 400). JSON:
  *         { scope, basePackage, nodeCount, edgeCount, truncated,
- *           nodes:[{id,label,cls,sub,kind}], edges:[{from,to}] }
+ *           entryPoints:[id...], primaryEntry:id,
+ *           nodes:[{id,label,cls,sub,kind,entry,entryKind,primary}],
+ *           edges:[{from,to}] }
+ *         Entry points are Android lifecycle roots (Application/Activity/Service/
+ *         Receiver/Provider lifecycle methods, static main); primaryEntry is the
+ *         app's most likely starting point.
  */
 public class JimpleDumper {
 
@@ -259,17 +264,38 @@ public class JimpleDumper {
             }
         }
 
-        // 4. Emit JSON.
+        // 4. Identify Android entry points among the nodes. These are the roots
+        //    of app control flow — the framework calls them, so they have no
+        //    caller inside the app. The "primary" entry is the app's starting
+        //    point (Application.onCreate → launcher/any Activity.onCreate → main).
+        List<Integer> entryIds = new ArrayList<>();
+        int primaryEntry = -1; int primaryRank = Integer.MAX_VALUE;
+        for (SootMethod m : methods) {
+            String ek = entryKind(m);
+            if (ek == null) continue;
+            int nid = id.get(m.getSignature());
+            entryIds.add(nid);
+            int rank = entryRank(m, ek);
+            if (rank < primaryRank) { primaryRank = rank; primaryEntry = nid; }
+        }
+
+        // 5. Emit JSON.
+        Set<Integer> entrySet = new HashSet<>(entryIds);
         StringBuilder nodes = new StringBuilder();
         for (SootMethod m : methods) {
             if (nodes.length() > 0) nodes.append(",");
             String cls = m.getDeclaringClass().getName();
             String label = shortLabel(cls) + "." + m.getName();
-            nodes.append("{\"id\":").append(id.get(m.getSignature()))
+            int nid = id.get(m.getSignature());
+            String ek = entryKind(m);
+            nodes.append("{\"id\":").append(nid)
                  .append(",\"label\":").append(jstr(label))
                  .append(",\"cls\":").append(jstr(cls))
                  .append(",\"sub\":").append(jstr(m.getSubSignature()))
                  .append(",\"kind\":").append(jstr(methodKind(m)))
+                 .append(",\"entry\":").append(entrySet.contains(nid))
+                 .append(",\"entryKind\":").append(jstr(ek))       // null when not an entry
+                 .append(",\"primary\":").append(nid == primaryEntry)
                  .append("}");
         }
         StringBuilder edges = new StringBuilder();
@@ -278,6 +304,8 @@ public class JimpleDumper {
             edges.append("{\"from\":").append((int) (e >> 32))
                  .append(",\"to\":").append((int) (e & 0xffffffffL)).append("}");
         }
+        StringBuilder eids = new StringBuilder();
+        for (int e : entryIds) { if (eids.length() > 0) eids.append(","); eids.append(e); }
 
         System.out.println("{\"scope\":" + jstr(prefix == null ? "(all app classes)" : prefix)
             + ",\"basePackage\":" + jstr(basePackage)
@@ -285,7 +313,93 @@ public class JimpleDumper {
             + ",\"edgeCount\":" + edgeSet.size()
             + ",\"truncated\":" + truncated
             + ",\"maxNodes\":" + maxNodes
+            + ",\"entryPoints\":[" + eids + "]"
+            + ",\"primaryEntry\":" + primaryEntry
             + ",\"nodes\":[" + nodes + "],\"edges\":[" + edges + "]}");
+    }
+
+    // ── Android entry-point detection ──────────────────────────────────────────
+    // The framework — not the app — invokes these, so they root the app's control
+    // flow. Detection is by component superclass (walked up the class hierarchy)
+    // plus the well-known lifecycle method name, with a few extras (main, JNI,
+    // static initialisers of Application classes).
+
+    // Component base class → the lifecycle method names that are entry points.
+    private static String entryKind(SootMethod m) {
+        String name = m.getName();
+
+        // Program main / JVM-style entry.
+        if (name.equals("main") && m.isStatic()) return "main";
+
+        SootClass sc = m.getDeclaringClass();
+        String comp = componentType(sc);              // Application/Activity/... or null
+        if (comp == null) {
+            // A static initialiser still runs at class load; only flag it for a
+            // component class (handled above) — otherwise it's just noise.
+            return null;
+        }
+
+        switch (comp) {
+            case "Application":
+                if (name.equals("onCreate") || name.equals("attachBaseContext")
+                    || name.equals("<clinit>")) return "application";
+                break;
+            case "Activity":
+                if (name.equals("onCreate") || name.equals("onStart") || name.equals("onResume")
+                    || name.equals("onNewIntent")) return "activity";
+                break;
+            case "Service":
+                if (name.equals("onCreate") || name.equals("onStartCommand") || name.equals("onBind"))
+                    return "service";
+                break;
+            case "BroadcastReceiver":
+                if (name.equals("onReceive")) return "receiver";
+                break;
+            case "ContentProvider":
+                if (name.equals("onCreate")) return "provider";
+                break;
+        }
+        return null;
+    }
+
+    // Lower rank = more likely to be THE starting point of the app.
+    private static int entryRank(SootMethod m, String kind) {
+        String name = m.getName();
+        switch (kind) {
+            case "application": return name.equals("onCreate") ? 0 : 1;   // Application.onCreate first
+            case "activity":    return name.equals("onCreate") ? 2 : 3;   // then an Activity's onCreate
+            case "main":        return 4;
+            case "service":     return 5;
+            case "provider":    return 6;
+            case "receiver":    return 7;
+            default:            return 100;
+        }
+    }
+
+    // Walk the superclass chain to classify sc as an Android component, tolerant
+    // of phantom/unresolved parents (obfuscated apps). Returns null if not one.
+    private static String componentType(SootClass sc) {
+        int guard = 0;
+        SootClass c = sc;
+        while (c != null && guard++ < 50) {
+            String n = c.getName();
+            switch (n) {
+                case "android.app.Application":          return "Application";
+                case "android.app.Activity":
+                case "androidx.activity.ComponentActivity":
+                case "androidx.appcompat.app.AppCompatActivity":
+                case "androidx.fragment.app.FragmentActivity": return "Activity";
+                case "android.app.Service":
+                case "androidx.core.app.JobIntentService":
+                case "android.app.IntentService":        return "Service";
+                case "android.content.BroadcastReceiver": return "BroadcastReceiver";
+                case "android.content.ContentProvider":  return "ContentProvider";
+            }
+            if (!c.hasSuperclass()) break;
+            try { c = c.getSuperclass(); } catch (Exception e) { break; }
+            if (c == sc) break;
+        }
+        return null;
     }
 
     // Auto-detect the app's base package: the longest dotted prefix (≥2 segments)

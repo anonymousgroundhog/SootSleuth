@@ -12,7 +12,9 @@ Drag an APK into the browser and either investigate it or instrument it.
   (statements as nodes; branch / fall-through / goto / switch / exception edges
   color-coded), plus a **whole-app call graph** (methods as nodes, calls as
   edges; auto-scoped to the app's package, pan/zoom, click a node to jump to its
-  Jimple). Read-only.
+  Jimple). The call graph **identifies the app's entry points** — Android
+  lifecycle roots (`Application`/`Activity`/`Service`/…) — and highlights the
+  primary starting point, auto-centering the view on it. Read-only.
 - **💉 Hacking** — inject `Log.d("SootInjection", "Entering: <method sig>")` at
   the start of every targeted method via Soot (`LogInjector.java`), then
   zipalign + apksign the result. Optionally install the injected APK on a

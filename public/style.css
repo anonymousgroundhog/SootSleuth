@@ -177,7 +177,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .cg-node.k-init   rect { fill: #221733; stroke: #4a327a; }
 .cg-node:hover rect { stroke: var(--accent); }
 .cg-ntext { font: 11px var(--mono); fill: var(--text); pointer-events: none; }
+/* Entry-point nodes: green outline; the primary (app start) is filled + bold. */
+.cg-node.cg-entry rect { stroke: var(--ok); stroke-width: 2; }
+.cg-node.cg-primary rect { fill: #123a1f; stroke: #56d97a; stroke-width: 2.5; }
+.cg-entrymark { font: 11px var(--mono); fill: var(--ok); pointer-events: none; }
+.cg-entrytag { font: 8.5px var(--mono); fill: var(--ok); text-anchor: end; pointer-events: none; opacity: .85; }
+.cg-node.cg-flash rect { animation: cgflash 1.1s ease-out 2; }
+@keyframes cgflash { 0%,100% { stroke: var(--ok); } 50% { stroke: #d7ffe3; stroke-width: 4; } }
+.cg-jump { font: 12px var(--mono); color: var(--ok); }
 .cfg-legend .n-dot { width: 10px; height: 10px; border-radius: 3px; }
+.cfg-legend .n-dot.entry { background: #123a1f; border: 2px solid #56d97a; }
 .cfg-legend .n-dot.init { background: #4a327a; }
 .cfg-legend .n-dot.static { background: #6a4a1e; }
 .cfg-legend .n-dot.method { background: #2b5573; }

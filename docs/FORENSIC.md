@@ -213,19 +213,45 @@ This is fast, deterministic, and good enough to see the app's structure; it does
 not resolve virtual dispatch to all possible targets (it records the statically
 referenced method).
 
+### Entry points (where app control flow starts)
+
+A static call graph has no single root — the *framework*, not the app, calls the
+lifecycle methods, so those methods have no in-app caller. `--callgraph`
+identifies them explicitly:
+
+- **Detection** walks each class's **superclass chain** to classify it as an
+  Android component (`Application`, `Activity` incl. `ComponentActivity`/
+  `AppCompatActivity`/`FragmentActivity`, `Service`/`IntentService`,
+  `BroadcastReceiver`, `ContentProvider`), then flags its known lifecycle methods
+  (`Application.onCreate`/`attachBaseContext`, `Activity.onCreate`/`onStart`/…,
+  `Service.onCreate`/`onStartCommand`/`onBind`, `onReceive`, provider
+  `onCreate`), plus any static `main`. Walking the hierarchy means it still works
+  through generated bases (e.g. Hilt's `Hilt_…` classes) and obfuscation.
+- **The primary entry** — the app's most likely starting point — is chosen by
+  rank: `Application.onCreate` → an `Activity.onCreate` → `main` → service →
+  provider → receiver. For the sample this is
+  `com.app.aiimglarger.AiEnlargerApp.onCreate`.
+
+Each node carries `entry` (bool), `entryKind` (`application`/`activity`/
+`service`/`receiver`/`provider`/`main`, or `null`), and `primary` (bool). The
+top level also lists `entryPoints` (node ids) and `primaryEntry` (the id, or
+`-1` if none is in scope).
+
 ### Output
 
 ```jsonc
 { "scope": "com.app.aiimglarger", "basePackage": "com.app.aiimglarger",
   "nodeCount": 400, "edgeCount": 322, "truncated": true, "maxNodes": 400,
-  "nodes": [ { "id": 0, "label": "MainActivity.onCreate",
-               "cls": "com.app...MainActivity", "sub": "void onCreate(android.os.Bundle)",
-               "kind": "method" }, ... ],
+  "entryPoints": [1, 5, 87], "primaryEntry": 5,
+  "nodes": [ { "id": 5, "label": "AiEnlargerApp.onCreate",
+               "cls": "com.app.aiimglarger.AiEnlargerApp", "sub": "void onCreate()",
+               "kind": "method", "entry": true, "entryKind": "application",
+               "primary": true }, ... ],
   "edges": [ { "from": 5, "to": 42 }, ... ] }
 ```
 
 Node `kind` ∈ `init` (`<init>`/`<clinit>`), `static`, `method` — the UI colors
-nodes by kind.
+nodes by kind, and outlines entry-point nodes in green (the primary is filled).
 
 ### The frontend
 
@@ -238,6 +264,12 @@ nodes by kind.
   graph is a general (often cyclic) digraph, so levels come from longest-path
   relaxation with a pass cap, and back-edges are drawn as dashed curves routed to
   the right.
-- The viewport supports **drag to pan** and **wheel to zoom** (`attachPanZoom`),
-  and **clicking a node jumps to that method's Jimple** (switches to the Jimple
-  tab and loads it). All self-contained — no graph library.
+- **Entry points** are drawn with a green outline and a `▶` glyph plus an
+  `entryKind` tag; the **primary entry** (app start) is filled and tagged
+  `start · …`. On render the view **auto-centers on the primary entry**, and the
+  meta line shows a **▶ &lt;entry&gt;** button that re-centers and flashes it on
+  demand — so the graph reads from where the app actually begins.
+- The viewport supports **drag to pan** and **wheel to zoom** (`attachPanZoom`,
+  which returns a `setView` used by the focus helper), and **clicking a node
+  jumps to that method's Jimple** (switches to the Jimple tab and loads it). All
+  self-contained — no graph library.

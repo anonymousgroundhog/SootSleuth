@@ -86,11 +86,17 @@ Response:
 ```jsonc
 { "scope": "com.app.aiimglarger", "basePackage": "com.app.aiimglarger",
   "nodeCount": 400, "edgeCount": 322, "truncated": true, "maxNodes": 400,
-  "nodes": [ { "id": 0, "label": "MainActivity.onCreate", "cls": "...", "sub": "...", "kind": "method" } ],
+  "entryPoints": [1, 5, 87], "primaryEntry": 5,
+  "nodes": [ { "id": 5, "label": "AiEnlargerApp.onCreate", "cls": "...", "sub": "...",
+               "kind": "method", "entry": true, "entryKind": "application", "primary": true } ],
   "edges": [ { "from": 5, "to": 42 } ] }
 ```
 
-Node `kind` ∈ `init` / `static` / `method`. See
+Node `kind` ∈ `init` / `static` / `method`. **Entry points** (Android lifecycle
+roots) carry `entry: true`, an `entryKind`
+(`application`/`activity`/`service`/`receiver`/`provider`/`main`), and `primary`
+for the app's starting point; the top level lists `entryPoints` (ids) and
+`primaryEntry` (id, or `-1`). See
 [FORENSIC.md → Whole-app call graph](FORENSIC.md#3-whole-app-call-graph).
 
 ---

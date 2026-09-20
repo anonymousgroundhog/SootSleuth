@@ -410,11 +410,17 @@ async function loadCallGraph() {
     if (!d.nodes || !d.nodes.length) { wrap.innerHTML = `<div class="hint">no methods in scope "${d.scope}".</div>`; return; }
     // Auto-fill the detected package so the user sees/can-edit the scope.
     if (!pkgPrefix && d.basePackage) $("#cgPkg").value = d.basePackage;
+    const primary = (d.nodes || []).find(n => n.id === d.primaryEntry);
     meta.innerHTML =
       `scope <b>${d.scope}</b> · ${d.nodeCount} methods · ${d.edgeCount} calls`
+      + ` · ${(d.entryPoints || []).length} entry point(s)`
+      + (primary ? ` · entry: <button class="link cg-jump" id="cgJumpEntry" title="${primary.cls}: ${primary.sub}">▶ ${primary.label}</button>` : "")
       + (d.truncated ? ` · <span class="cg-trunc">truncated to ${d.maxNodes} — narrow the package or raise max nodes</span>` : "");
     wrap.innerHTML = "";
-    wrap.appendChild(renderCallGraph(d));
+    const view = renderCallGraph(d);
+    wrap.appendChild(view);
+    // "Jump to entry point" centers + flashes the primary entry node.
+    if (primary) $("#cgJumpEntry").onclick = () => view._focusNode && view._focusNode(d.primaryEntry);
   } catch (e) { wrap.innerHTML = `<div class="hint">Error: ${e.message}</div>`; }
   finally { $("#cgRenderBtn").disabled = false; }
 }
@@ -501,28 +507,61 @@ function renderCallGraph(cg) {
   }
 
   // Nodes.
+  const nodeEls = new Map();
   for (const n of nodes) {
     const p = pos.get(n.id);
     const g = document.createElementNS(NS, "g");
     g.setAttribute("transform", `translate(${p.x},${p.y})`);
-    g.setAttribute("class", "cg-node k-" + (n.kind || "method"));
+    let cls = "cg-node k-" + (n.kind || "method");
+    if (n.entry) cls += " cg-entry" + (n.primary ? " cg-primary" : "");
+    g.setAttribute("class", cls);
     g.style.cursor = "pointer";
     const rect = document.createElementNS(NS, "rect");
     rect.setAttribute("width", BW); rect.setAttribute("height", BH); rect.setAttribute("rx", "6");
     g.appendChild(rect);
     const txt = document.createElementNS(NS, "text");
-    txt.setAttribute("x", "9"); txt.setAttribute("y", "22"); txt.setAttribute("class", "cg-ntext");
-    txt.textContent = n.label.length > 30 ? n.label.slice(0, 29) + "…" : n.label;
+    txt.setAttribute("x", n.entry ? "24" : "9"); txt.setAttribute("y", "22"); txt.setAttribute("class", "cg-ntext");
+    txt.textContent = n.label.length > 28 ? n.label.slice(0, 27) + "…" : n.label;
+    g.appendChild(txt);
+    // Entry marker: a ▶ glyph + a small "entry" tag on the box.
+    if (n.entry) {
+      const mark = document.createElementNS(NS, "text");
+      mark.setAttribute("x", "8"); mark.setAttribute("y", "23"); mark.setAttribute("class", "cg-entrymark");
+      mark.textContent = "▶";
+      g.appendChild(mark);
+      const tag = document.createElementNS(NS, "text");
+      tag.setAttribute("x", BW - 6); tag.setAttribute("y", "12"); tag.setAttribute("class", "cg-entrytag");
+      tag.textContent = n.primary ? "start · " + n.entryKind : n.entryKind;
+      g.appendChild(tag);
+    }
     const title = document.createElementNS(NS, "title");
-    title.textContent = `${n.cls}: ${n.sub}\n(click to view Jimple)`;
-    g.appendChild(txt); g.appendChild(title);
-    // Click a node → jump to its method's Jimple.
+    title.textContent = `${n.cls}: ${n.sub}`
+      + (n.entry ? `\n[entry point: ${n.entryKind}${n.primary ? " — app start" : ""}]` : "")
+      + `\n(click to view Jimple)`;
+    g.appendChild(title);
     g.onclick = () => openMethodJimple(n.cls, n.sub);
     svg.appendChild(g);
+    nodeEls.set(n.id, { g, p });
   }
 
   container.appendChild(svg);
-  attachPanZoom(container, svg, width, height);
+  const pz = attachPanZoom(container, svg, width, height);
+
+  // Focus helper: center a node in the viewport and flash it.
+  container._focusNode = (nid) => {
+    const ne = nodeEls.get(nid);
+    if (!ne) return;
+    const vr = container.getBoundingClientRect();
+    const s = 1.2;
+    const cx = ne.p.x + BW / 2, cy = ne.p.y + BH / 2;
+    pz.setView(vr.width / 2 - cx * s, vr.height / 2 - cy * s, s);
+    ne.g.classList.remove("cg-flash"); void ne.g.getBoundingClientRect();
+    ne.g.classList.add("cg-flash");
+  };
+  // Auto-focus the primary entry on first render so control flow starts there.
+  if (cg.primaryEntry != null && cg.primaryEntry >= 0 && nodeEls.has(cg.primaryEntry)) {
+    requestAnimationFrame(() => container._focusNode(cg.primaryEntry));
+  }
   return container;
 }
 
@@ -538,6 +577,7 @@ async function openMethodJimple(cls, sub) {
 }
 
 // Drag to pan, wheel to zoom, over an SVG inside a viewport div.
+// Returns { setView(tx,ty,scale) } so callers can center on a node.
 function attachPanZoom(viewport, svg, w, h) {
   let scale = 1, tx = 0, ty = 0, dragging = false, sx = 0, sy = 0;
   const apply = () => svg.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
@@ -556,6 +596,7 @@ function attachPanZoom(viewport, svg, w, h) {
   window.addEventListener("mousemove", e => { if (!dragging) return; tx = e.clientX - sx; ty = e.clientY - sy; apply(); });
   window.addEventListener("mouseup", () => { dragging = false; viewport.classList.remove("grabbing"); });
   apply();
+  return { setView(ntx, nty, ns) { tx = ntx; ty = nty; scale = ns; apply(); } };
 }
 
 // ── Hacking ──────────────────────────────────────────────────────────────────

@@ -415,12 +415,14 @@ async function loadCallGraph() {
       `scope <b>${d.scope}</b> · ${d.nodeCount} methods · ${d.edgeCount} calls`
       + ` · ${(d.entryPoints || []).length} entry point(s)`
       + (primary ? ` · entry: <button class="link cg-jump" id="cgJumpEntry" title="${primary.cls}: ${primary.sub}">▶ ${primary.label}</button>` : "")
+      + ` · <button class="link" id="cgFit">fit</button>`
       + (d.truncated ? ` · <span class="cg-trunc">truncated to ${d.maxNodes} — narrow the package or raise max nodes</span>` : "");
     wrap.innerHTML = "";
     const view = renderCallGraph(d);
     wrap.appendChild(view);
     // "Jump to entry point" centers + flashes the primary entry node.
     if (primary) $("#cgJumpEntry").onclick = () => view._focusNode && view._focusNode(d.primaryEntry);
+    $("#cgFit").onclick = () => view._fit && view._fit();
   } catch (e) { wrap.innerHTML = `<div class="hint">Error: ${e.message}</div>`; }
   finally { $("#cgRenderBtn").disabled = false; }
 }
@@ -431,40 +433,95 @@ async function loadCallGraph() {
 function renderCallGraph(cg) {
   const nodes = cg.nodes, edges = cg.edges;
   const byId = new Map(nodes.map(n => [n.id, n]));
-  const indeg = new Map(nodes.map(n => [n.id, 0]));
-  for (const e of edges) if (byId.has(e.to)) indeg.set(e.to, indeg.get(e.to) + 1);
 
-  // Longest-path leveling, capped to survive cycles.
-  const level = new Map(nodes.map(n => [n.id, 0]));
-  for (let pass = 0; pass < Math.min(nodes.length, 60); pass++) {
+  // Adjacency + degree over in-scope edges only.
+  const succ = new Map(nodes.map(n => [n.id, []]));
+  const pred = new Map(nodes.map(n => [n.id, []]));
+  for (const e of edges) {
+    if (!byId.has(e.from) || !byId.has(e.to)) continue;
+    succ.get(e.from).push(e.to);
+    pred.get(e.to).push(e.from);
+  }
+
+  // Separate connected nodes from isolated ones (no calls to/from in scope).
+  // Isolated nodes are the bulk of a truncated graph and, mixed into the flow,
+  // create one giant packed row — so they go into a compact grid at the bottom.
+  const connected = nodes.filter(n => succ.get(n.id).length || pred.get(n.id).length);
+  const isolated  = nodes.filter(n => !succ.get(n.id).length && !pred.get(n.id).length);
+
+  // Longest-path leveling over connected nodes, capped to survive cycles.
+  const level = new Map(connected.map(n => [n.id, 0]));
+  for (let pass = 0; pass < Math.min(connected.length, 80); pass++) {
     let changed = false;
     for (const e of edges) {
       if (!level.has(e.from) || !level.has(e.to)) continue;
       const nl = level.get(e.from) + 1;
-      if (nl > level.get(e.to) && nl <= nodes.length) { level.set(e.to, nl); changed = true; }
+      if (nl > level.get(e.to) && nl <= connected.length) { level.set(e.to, nl); changed = true; }
     }
     if (!changed) break;
   }
 
-  // Rows by level.
-  const rows = new Map();
-  for (const n of nodes) {
-    const l = level.get(n.id);
-    if (!rows.has(l)) rows.set(l, []);
-    rows.get(l).push(n);
-  }
-  const levels = [...rows.keys()].sort((a, b) => a - b);
+  // Layout constants — roomier than before to reduce line/box overlap.
+  const BW = 200, BH = 34, GAPX = 44, GAPY = 96, PADX = 30, PADY = 30;
+  // Wrap very wide levels so no single row runs off-screen. Aim for a roughly
+  // square-ish canvas based on how many connected nodes there are.
+  const MAX_COLS = Math.max(6, Math.min(14, Math.ceil(Math.sqrt(connected.length || 1) * 1.4)));
 
-  const BW = 210, BH = 34, GAPX = 18, ROWH = 74, PADX = 24, PADY = 24;
+  // Group connected nodes by level; order within a level by barycenter of
+  // predecessor columns (Sugiyama-style crossing reduction), seeded by label.
+  const levelRows = new Map();
+  for (const n of connected) {
+    const l = level.get(n.id);
+    if (!levelRows.has(l)) levelRows.set(l, []);
+    levelRows.get(l).push(n);
+  }
+  const levels = [...levelRows.keys()].sort((a, b) => a - b);
+
   const pos = new Map();
-  let maxCols = 0;
-  levels.forEach((l, r) => {
-    const row = rows.get(l).sort((a, b) => a.label.localeCompare(b.label));
-    maxCols = Math.max(maxCols, row.length);
-    row.forEach((n, c) => pos.set(n.id, { x: PADX + c * (BW + GAPX), y: PADY + r * ROWH }));
-  });
-  const width = PADX * 2 + Math.max(1, maxCols) * BW + (maxCols - 1) * GAPX;
-  const height = PADY * 2 + levels.length * ROWH;
+  const colOf = new Map();          // node id → its column within its (sub)row
+  let rowIndex = 0, maxCols = 0;
+  for (const l of levels) {
+    let row = levelRows.get(l);
+    // barycenter ordering using columns already assigned to predecessors
+    row = row.slice().sort((a, b) => {
+      const ba = bary(a.id), bb = bary(b.id);
+      if (ba !== bb) return ba - bb;
+      return a.label.localeCompare(b.label);
+    });
+    // wrap into sub-rows of at most MAX_COLS
+    for (let i = 0; i < row.length; i += MAX_COLS) {
+      const chunk = row.slice(i, i + MAX_COLS);
+      const rowW = chunk.length * BW + (chunk.length - 1) * GAPX;
+      const startX = PADX + Math.max(0, (MAX_COLS * BW + (MAX_COLS - 1) * GAPX - rowW) / 2); // center the sub-row
+      chunk.forEach((n, c) => {
+        pos.set(n.id, { x: startX + c * (BW + GAPX), y: PADY + rowIndex * GAPY });
+        colOf.set(n.id, c);
+      });
+      maxCols = Math.max(maxCols, chunk.length);
+      rowIndex++;
+    }
+  }
+  function bary(id) {
+    const ps = pred.get(id).filter(p => colOf.has(p));
+    if (!ps.length) return 1e9; // no placed predecessor yet → sort last (stable)
+    return ps.reduce((s, p) => s + colOf.get(p), 0) / ps.length;
+  }
+
+  // Place isolated nodes in a compact grid below the flow, under a divider.
+  const flowBottom = PADY + rowIndex * GAPY;
+  const isoTop = flowBottom + (isolated.length ? 48 : 0);
+  const isoCols = Math.max(6, Math.min(14, Math.ceil(Math.sqrt(isolated.length || 1) * 1.6)));
+  isolated
+    .slice().sort((a, b) => a.label.localeCompare(b.label))
+    .forEach((n, i) => {
+      const r = Math.floor(i / isoCols), c = i % isoCols;
+      pos.set(n.id, { x: PADX + c * (BW + GAPX), y: isoTop + r * (BH + 24) });
+    });
+  const isoRows = Math.ceil(isolated.length / isoCols);
+  const gridCols = Math.max(maxCols, isolated.length ? isoCols : 1);
+
+  const width  = PADX * 2 + gridCols * BW + (gridCols - 1) * GAPX;
+  const height = (isolated.length ? isoTop + isoRows * (BH + 24) : flowBottom) + PADY;
 
   const NS = "http://www.w3.org/2000/svg";
   const container = document.createElement("div");
@@ -484,6 +541,21 @@ function renderCallGraph(cg) {
   const mp = document.createElementNS(NS, "path");
   mp.setAttribute("d", "M0,0 L6,2.5 L0,5 Z"); mp.setAttribute("fill", "#5b6472");
   mk.appendChild(mp); defs.appendChild(mk); svg.appendChild(defs);
+
+  // Divider + label above the isolated-methods grid.
+  if (isolated.length) {
+    const ly = flowBottom + 24;
+    const line = document.createElementNS(NS, "line");
+    line.setAttribute("x1", PADX); line.setAttribute("x2", width - PADX);
+    line.setAttribute("y1", ly); line.setAttribute("y2", ly);
+    line.setAttribute("class", "cg-divider");
+    svg.appendChild(line);
+    const lbl = document.createElementNS(NS, "text");
+    lbl.setAttribute("x", PADX); lbl.setAttribute("y", ly - 8);
+    lbl.setAttribute("class", "cg-divlabel");
+    lbl.textContent = `${isolated.length} method(s) with no calls to/from others in scope`;
+    svg.appendChild(lbl);
+  }
 
   // Edges.
   for (const e of edges) {
@@ -547,21 +619,34 @@ function renderCallGraph(cg) {
   container.appendChild(svg);
   const pz = attachPanZoom(container, svg, width, height);
 
-  // Focus helper: center a node in the viewport and flash it.
-  container._focusNode = (nid) => {
+  // Focus helper: center a node in the viewport at scale s and flash it.
+  container._focusNode = (nid, s = 1.1) => {
     const ne = nodeEls.get(nid);
     if (!ne) return;
     const vr = container.getBoundingClientRect();
-    const s = 1.2;
     const cx = ne.p.x + BW / 2, cy = ne.p.y + BH / 2;
     pz.setView(vr.width / 2 - cx * s, vr.height / 2 - cy * s, s);
     ne.g.classList.remove("cg-flash"); void ne.g.getBoundingClientRect();
     ne.g.classList.add("cg-flash");
   };
-  // Auto-focus the primary entry on first render so control flow starts there.
-  if (cg.primaryEntry != null && cg.primaryEntry >= 0 && nodeEls.has(cg.primaryEntry)) {
-    requestAnimationFrame(() => container._focusNode(cg.primaryEntry));
-  }
+  // Fit the whole graph into the viewport so its structure is visible at a glance.
+  container._fit = () => {
+    const vr = container.getBoundingClientRect();
+    if (!vr.width) return;
+    const s = Math.max(0.15, Math.min(1, Math.min(vr.width / width, vr.height / height) * 0.96));
+    pz.setView((vr.width - width * s) / 2, 16, s);
+    return s;
+  };
+  // On first render: fit to view, then flash the primary entry in place so the
+  // user sees both the overall shape and where control flow starts.
+  requestAnimationFrame(() => {
+    container._fit();
+    if (cg.primaryEntry != null && cg.primaryEntry >= 0 && nodeEls.has(cg.primaryEntry)) {
+      const ne = nodeEls.get(cg.primaryEntry);
+      ne.g.classList.remove("cg-flash"); void ne.g.getBoundingClientRect();
+      ne.g.classList.add("cg-flash");
+    }
+  });
   return container;
 }
 

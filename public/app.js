@@ -10,7 +10,7 @@ async function loadTools() {
     const chips = [
       ["java", tools.java], ["javac", tools.javac], ["Android SDK", tools.platforms],
       ["adb", tools.adb], ["zipalign", tools.zipalign], ["apksigner", tools.apksigner],
-      ["jars", tools.jarLibsExist], ["injector", tools.injectorCompiled],
+      ["jadx", tools.jadx], ["jars", tools.jarLibsExist], ["injector", tools.injectorCompiled],
     ];
     $("#toolbar").innerHTML = chips.map(([n, on]) =>
       `<span class="chip ${on ? "on" : "off"}">${on ? "✓" : "✕"} ${n}</span>`).join("");
@@ -144,6 +144,269 @@ function renderInspect(d) {
   $("#inspectResult").appendChild(el);
 }
 
+// ── Malware analysis ──────────────────────────────────────────────────────────
+$("#malwareBtn").onclick = async () => {
+  if (!state.jobId) return;
+  $("#malwareResult").innerHTML = `<div class="hint">Analyzing… (hashing + DEX string scan)</div>`;
+  try {
+    const r = await fetch("/api/malware", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId: state.jobId, file: state.primary }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    renderMalware(d);
+  } catch (e) { $("#malwareResult").innerHTML = `<div class="f err">${e.message}</div>`; }
+};
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function renderMalware(d) {
+  const m = d.meta || {};
+  const iocList = (arr, cls) => arr.length
+    ? `<div class="ioc-list">${arr.map(x => `<code class="ioc ${cls}">${esc(x)}</code>`).join("")}</div>`
+    : `<span class="hint">none found</span>`;
+
+  const behaviorRows = d.behaviors.length
+    ? d.behaviors.sort((a, b) => b.weight - a.weight).map(b => `
+        <div class="sig ${b.lowConfidence ? "low" : ""}">
+          <div class="sig-head">
+            <span class="sig-name">${esc(b.name)}</span>
+            ${b.lowConfidence ? `<span class="tag low" title="Permission not granted — likely a bundled-SDK reference. Verify.">low confidence</span>` : ""}
+            <span class="tag hits" title="distinct pattern matches / usage-proving matches">${b.matches} match${b.matches === 1 ? "" : "es"}${b.strong ? ` · ${b.strong} strong` : ""}</span>
+          </div>
+          <div class="sig-why">${esc(b.why)}</div>
+        </div>`).join("")
+    : `<span class="hint">no suspicious API/behavior signatures matched</span>`;
+
+  const permRows = d.dangerousPermissions.length
+    ? d.dangerousPermissions.sort((a, b) => b.weight - a.weight).map(p => `
+        <div class="dperm w${p.weight}">
+          <span class="dperm-name">${esc(p.perm)}</span>
+          <span class="dperm-why">${esc(p.why)}</span>
+        </div>`).join("")
+    : `<span class="hint">no high-risk permissions requested</span>`;
+
+  const el = document.createElement("div");
+  el.innerHTML = `
+    <div class="card risk ${d.riskLevel}">
+      <div class="risk-row">
+        <div class="risk-badge ${d.riskLevel}">${d.riskLevel.toUpperCase()}</div>
+        <div class="risk-meta">
+          <div class="risk-score">Triage score: <b>${d.riskScore}</b></div>
+          <div class="hint">${esc(d.note || "")}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card"><h3>File identity</h3><div class="kv">
+      <span class="k">File</span><span>${esc(d.file)} (${(d.sizeBytes / 1048576).toFixed(1)} MB)</span>
+      <span class="k">Package</span><span>${esc(m.package || "—")}</span>
+      <span class="k">Version</span><span>${esc(m.versionName || "—")} (${esc(m.versionCode || "—")})</span>
+      <span class="k">App name</span><span>${esc(m.appName || "—")}</span>
+      <span class="k">Target SDK</span><span>${esc(m.targetSdk || "—")}</span>
+      <span class="k">MD5</span><span class="mono-val">${d.hashes.md5}</span>
+      <span class="k">SHA-1</span><span class="mono-val">${d.hashes.sha1}</span>
+      <span class="k">SHA-256</span><span class="mono-val">${d.hashes.sha256}</span>
+    </div></div>
+
+    ${d.combos.length ? `<div class="card"><h3>⚠ Correlated indicators</h3>
+      <ul class="combo-list">${d.combos.map(c => `<li>${esc(c)}</li>`).join("")}</ul>
+    </div>` : ""}
+
+    <div class="card"><h3>Dangerous permissions (${d.dangerousPermissions.length})${d.permSource !== "none" ? ` · via ${d.permSource}` : ""}</h3>
+      <div class="dperm-list">${permRows}</div>
+    </div>
+
+    <div class="card"><h3>Behavior signatures (${d.behaviors.length})</h3>
+      <div class="sig-list">${behaviorRows}</div>
+    </div>
+
+    <div class="card"><h3>Packer / obfuscation</h3>
+      ${d.packer.detected
+        ? `<div class="badges">${d.packer.hits.map(h => `<span class="badge ad">${esc(h)}</span>`).join("")}</div>`
+        : `<span class="hint">no known packer detected</span>`}
+      ${d.packer.notes && d.packer.notes.length
+        ? `<ul class="note-list">${d.packer.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
+    </div>
+
+    <div class="card"><h3>Network IOCs — domains (${d.iocCounts.domains})</h3>${iocList(d.iocs.domains, "dom")}</div>
+    <div class="card"><h3>Network IOCs — URLs (${d.iocCounts.urls})</h3>${iocList(d.iocs.urls, "url")}</div>
+    <div class="card"><h3>Network IOCs — IPs (${d.iocCounts.ips})</h3>${iocList(d.iocs.ips, "ip")}</div>
+
+    ${d.otherPermissions.length ? `<div class="card"><h3>Other permissions (${d.otherPermissions.length})</h3>
+      <div class="perm-list">${d.otherPermissions.map(p => `<span class="perm">${esc(p)}</span>`).join("")}</div>
+    </div>` : ""}`;
+  $("#malwareResult").innerHTML = "";
+  $("#malwareResult").appendChild(el);
+}
+
+// ── Forensic: APK file browser ────────────────────────────────────────────────
+const fx = { tree: null, flat: [], current: null };
+const KIND_ICON = {
+  manifest: "📜", resources: "🎛️", dex: "🧩", native: "⚙️", image: "🖼️",
+  font: "🔤", signature: "🔏", xml: "📐", text: "📄", binary: "▪️", other: "📄",
+};
+
+function resetFiles() {
+  fx.tree = null; fx.flat = []; fx.current = null;
+  $("#filesBody").classList.add("hidden");
+  $("#fileTree").innerHTML = ""; $("#fileSearch").value = "";
+  $("#fileOut").textContent = "";
+  $("#fileviewHead").innerHTML = `<span class="hint">Pick a file to view its contents.</span>`;
+  $("#filesHint").textContent = "Browse the original files packed in the APK. Binary AndroidManifest.xml and resources are decoded to readable text; text files shown inline; binaries as hex + strings.";
+}
+
+$("#loadFilesBtn").onclick = async () => {
+  if (!state.jobId) return;
+  $("#filesHint").textContent = "Loading file tree…";
+  try {
+    const d = await api("/api/files");
+    fx.tree = d.tree;
+    fx.flat = [];
+    (function walk(ns) { for (const n of ns) { if (n.dir) walk(n.children); else fx.flat.push(n); } })(d.tree);
+    $("#filesHint").textContent = `${d.entryCount} files${d.bundle ? ` · ${d.bundle.type.toUpperCase()} base: ${d.bundle.baseApk}` : ""}`;
+    $("#filesBody").classList.remove("hidden");
+    renderFileTree("");
+  } catch (e) { $("#filesHint").textContent = "Error: " + e.message; }
+};
+
+$("#fileSearch").oninput = e => renderFileTree(e.target.value.trim().toLowerCase());
+
+// Render the tree. With no filter, show the nested collapsible structure; with a
+// filter, show a flat list of matching paths (easier to scan).
+function renderFileTree(filter) {
+  const host = $("#fileTree");
+  if (filter) {
+    const hits = fx.flat.filter(f => f.path.toLowerCase().includes(filter)).slice(0, 500);
+    host.innerHTML = hits.length
+      ? hits.map(f => fileRow(f, f.path)).join("")
+      : `<div class="hint">no match</div>`;
+  } else {
+    host.innerHTML = renderNodes(fx.tree, 0);
+  }
+  bindTreeClicks();
+}
+
+function renderNodes(nodes, depth) {
+  return nodes.map(n => {
+    const pad = `style="padding-left:${8 + depth * 14}px"`;
+    if (n.dir) {
+      return `<div class="tnode tdir" ${pad} data-dir="1"><span class="tcaret">▸</span>📁 ${esc(n.name)}</div>
+        <div class="tchildren hidden">${renderNodes(n.children, depth + 1)}</div>`;
+    }
+    return fileRow(n, n.name, pad);
+  }).join("");
+}
+
+function fileRow(n, label, pad = 'style="padding-left:8px"') {
+  const icon = KIND_ICON[n.kind] || "📄";
+  const size = n.size != null ? `<span class="tsize">${fmtSize(n.size)}</span>` : "";
+  return `<div class="tnode tfile" ${pad} data-path="${esc(n.path)}" title="${esc(n.path)}">${icon} <span class="tname">${esc(label)}</span>${size}</div>`;
+}
+
+function fmtSize(b) {
+  if (b < 1024) return b + " B";
+  if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
+  return (b / 1048576).toFixed(1) + " MB";
+}
+
+function bindTreeClicks() {
+  $("#fileTree").querySelectorAll(".tdir").forEach(d => d.onclick = () => {
+    const kids = d.nextElementSibling;
+    if (kids && kids.classList.contains("tchildren")) {
+      kids.classList.toggle("hidden");
+      d.querySelector(".tcaret").textContent = kids.classList.contains("hidden") ? "▸" : "▾";
+    }
+  });
+  $("#fileTree").querySelectorAll(".tfile").forEach(f => f.onclick = () => openFile(f.dataset.path, f));
+}
+
+async function openFile(entry, el) {
+  $("#fileTree").querySelectorAll(".tfile.sel").forEach(x => x.classList.remove("sel"));
+  if (el) el.classList.add("sel");
+  fx.current = entry;
+  $("#fileviewHead").innerHTML = `<span class="hint">Loading ${esc(entry)}…</span>`;
+  $("#fileOut").textContent = "";
+  try {
+    const d = await api("/api/file", { entry });
+    if (d.error) { $("#fileviewHead").innerHTML = `<span class="f err">${esc(d.error)}</span>`; return; }
+    const fmtLabel = {
+      axml: "decoded AXML", resources: "decoded resources", text: "text", binary: "binary",
+    }[d.format] || d.format;
+    $("#fileviewHead").innerHTML =
+      `<code class="fpath">${esc(d.path)}</code>` +
+      `<span class="tag">${fmtLabel}</span>` +
+      `<span class="tag hits">${fmtSize(d.size || 0)}</span>` +
+      (d.truncated ? `<span class="tag low">truncated</span>` : "") +
+      (d.note ? `<span class="hint"> ${esc(d.note)}</span>` : "");
+    if (d.format === "binary") {
+      const strs = (d.strings && d.strings.length)
+        ? `\n\n── strings ──\n${d.strings.join("\n")}` : "";
+      $("#fileOut").textContent = `── hex (first ${(d.hex || "").split("\n").length * 16} bytes) ──\n${d.hex || ""}${strs}`;
+    } else {
+      $("#fileOut").textContent = d.content || "(empty)";
+    }
+  } catch (e) { $("#fileviewHead").innerHTML = `<span class="f err">${esc(e.message)}</span>`; }
+}
+
+// ── Malware: decompiled Java (jadx) ───────────────────────────────────────────
+const dx = { classes: [], className: null };
+
+function resetDecomp() {
+  dx.classes = []; dx.className = null;
+  $("#decompBody").classList.add("hidden");
+  $("#decompClassList").innerHTML = ""; $("#decompSearch").value = "";
+  $("#decompOut").textContent = "Pick a class to view its decompiled Java.";
+  $("#decompHead").innerHTML = `<span class="hint">Pick a class to view its decompiled Java.</span>`;
+  $("#decompHint").textContent = "Decompile the app's classes back to readable Java (via jadx) to inspect suspicious code. Complements the Jimple IR view in Forensic mode.";
+}
+
+$("#loadDecompClassesBtn").onclick = async () => {
+  if (!state.jobId) return;
+  $("#decompHint").textContent = "Loading classes… (first call is slow — Soot startup)";
+  try {
+    const { classes } = await api("/api/classes");
+    dx.classes = classes;
+    $("#decompHint").textContent = `${classes.length} app classes — pick one to decompile`;
+    $("#decompBody").classList.remove("hidden");
+    renderDecompClasses("");
+  } catch (e) { $("#decompHint").textContent = "Error: " + e.message; }
+};
+
+$("#decompSearch").oninput = e => renderDecompClasses(e.target.value.trim().toLowerCase());
+
+function renderDecompClasses(filter) {
+  const list = filter ? dx.classes.filter(c => c.toLowerCase().includes(filter)) : dx.classes;
+  const ul = $("#decompClassList");
+  ul.innerHTML = list.slice(0, 1000).map(c =>
+    `<li data-cls="${esc(c)}" class="${c === dx.className ? "sel" : ""}">${esc(c)}</li>`).join("")
+    || `<li class="hint">no match</li>`;
+  ul.querySelectorAll("li[data-cls]").forEach(li => li.onclick = () => openDecomp(li.dataset.cls));
+}
+
+async function openDecomp(className) {
+  dx.className = className;
+  $("#decompClassList").querySelectorAll("li").forEach(li =>
+    li.classList.toggle("sel", li.dataset.cls === className));
+  $("#decompHead").innerHTML = `<span class="hint">Decompiling ${esc(className)}… (jadx)</span>`;
+  $("#decompOut").textContent = "";
+  try {
+    const d = await api("/api/decompile", { className });
+    $("#decompHead").innerHTML =
+      `<code class="fpath">${esc(className)}</code>` +
+      `<span class="tag">${esc(d.engine || "jadx")}</span>` +
+      (d.cached ? `<span class="tag">cached</span>` : "");
+    $("#decompOut").textContent = d.java || "(no source)";
+  } catch (e) {
+    // jadx missing → api() throws with the server's message; show it inline.
+    $("#decompHead").innerHTML = `<span class="f err">decompile unavailable</span>`;
+    $("#decompOut").textContent = e.message + "\n\nTip: install jadx (https://github.com/skylot/jadx) and ensure it's on PATH or in JADX_HOME. The Jimple IR view in Forensic mode works without jadx.";
+  }
+}
+
 // ── Forensic: Jimple + CFG explorer ───────────────────────────────────────────
 const ex = { classes: [], className: null, methods: [], subsig: null };
 
@@ -158,6 +421,8 @@ function resetExplorer() {
   $("#cgWrap").innerHTML = `<div class="hint">Whole-app call graph: methods are nodes, edges are calls. Scoped to the app's own package and capped for readability. Click <b>Render</b> (loads app classes first if needed).</div>`;
   $("#cgMeta").textContent = ""; $("#cgPkg").value = ""; $("#cgCap").value = "400";
   $("#explorerHint").textContent = "Decompile app classes to Soot's Jimple IR and view a method's control-flow graph.";
+  resetFiles();
+  resetDecomp();
 }
 
 async function api(url, body) {

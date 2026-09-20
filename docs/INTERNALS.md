@@ -14,6 +14,9 @@ Everything OS-specific lives here so the rest of the code is platform-agnostic.
   locations per OS (`~/.cargo/bin`, `~/.local/bin`, `/usr/local/bin`,
   `/opt/homebrew/bin`, `C:\Program Files\…`).
 - `findAdb()` — searches the Android SDK roots' `platform-tools/`, then PATH.
+- `findJadx()` — PATH (`jadx` / `jadx.bat`), then `JADX_HOME/bin`, then common
+  install dirs (`/opt/jadx`, `~/.local/jadx`, Homebrew libexec, …). Optional; its
+  absence only disables the decompiled-Java view.
 - `findBuildTool(name)` — newest `build-tools/<ver>/` binary; knows `apksigner`
   is a `.bat` on Windows while `zipalign`/`aapt2` are `.exe`.
 - `findAndroidPlatforms()` — first SDK root with a non-empty `platforms/`; falls

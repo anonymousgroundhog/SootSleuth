@@ -19,6 +19,9 @@ const crypto = require("crypto");
 
 const { checkTools, UPLOADS_DIR, OUTPUT_DIR } = require("./lib/tools");
 const { inspectApk } = require("./lib/inspector");
+const { analyzeApk } = require("./lib/malware");
+const { listApkFiles, readApkFile } = require("./lib/files");
+const { decompileClass } = require("./lib/decompile");
 const jimpleLib = require("./lib/jimple");
 const { inject } = require("./lib/injector");
 const { instrument, listDevices } = require("./lib/instrument");
@@ -131,6 +134,39 @@ app.post("/api/inspect", (req, res) => {
   }
 });
 
+// MALWARE ANALYSIS — static triage (hashes, dangerous perms, behavior sigs,
+// network IOCs, packer hints, risk score). Read-only; nothing is executed.
+app.post("/api/malware", (req, res) => {
+  const { jobId, file } = req.body || {};
+  const apk = resolveApk(jobId, file);
+  if (!apk) return res.status(400).json({ error: "APK not found for job" });
+  try {
+    res.json(analyzeApk(apk));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// FORENSIC — APK file browser. List the original packed files as a tree, and
+// read one entry's contents (AXML/resources decoded, text inline, binaries as
+// hex + strings). Read-only; entries index into the APK's own ZIP directory.
+app.post("/api/files", (req, res) => {
+  const { jobId, file } = req.body || {};
+  const apk = resolveApk(jobId, file);
+  if (!apk) return res.status(400).json({ error: "APK not found for job" });
+  try { res.json(listApkFiles(apk)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/file", (req, res) => {
+  const { jobId, file, entry } = req.body || {};
+  const apk = resolveApk(jobId, file);
+  if (!apk) return res.status(400).json({ error: "APK not found for job" });
+  if (!entry || typeof entry !== "string") return res.status(400).json({ error: "entry required" });
+  try { res.json(readApkFile(apk, entry)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // FORENSIC — Jimple IR + control-flow graph (read-only Soot).
 // Resolve to the raw APK Soot can process (bundle → its base APK, extracted once).
 function resolveSootApk(jobId, file) {
@@ -156,6 +192,18 @@ app.post("/api/classes", (req, res) => {
   if (!apk) return res.status(400).json({ error: "APK not found for job" });
   try { res.json({ classes: jimpleLib.listClasses(apk) }); }
   catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// MALWARE / FORENSIC — decompiled Java (jadx). Class list comes from Soot
+// (/api/classes); this returns one class's source. Uses the same DEX-bearing
+// base APK Soot does. Degrades cleanly when jadx isn't installed.
+app.post("/api/decompile", (req, res) => {
+  const { jobId, file, className } = req.body || {};
+  const apk = resolveSootApk(jobId, file);
+  if (!apk) return res.status(400).json({ error: "APK not found for job" });
+  if (!className) return res.status(400).json({ error: "className required" });
+  try { res.json(decompileClass(apk, className)); }
+  catch (e) { res.status(e.code === "NO_JADX" ? 501 : 500).json({ error: e.message, code: e.code || null }); }
 });
 
 app.post("/api/methods", (req, res) => {

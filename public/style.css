@@ -197,3 +197,95 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .cfg-legend .n-dot.method { background: #2b5573; }
 
 @media (max-width: 700px) { .pickers { grid-template-columns: 1fr; height: auto; } .pickers .col { height: 200px; } .col-view { height: 520px; } }
+
+/* ── Malware analysis ──────────────────────────────────────────────────────── */
+.card.risk { border-width: 1px; }
+.card.risk.low      { border-color: #24502f; }
+.card.risk.medium   { border-color: #6a4a1e; }
+.card.risk.high     { border-color: #7a3320; }
+.card.risk.critical { border-color: #7a2030; background: #1b1216; }
+.risk-row { display: flex; align-items: center; gap: 16px; }
+.risk-badge {
+  font-weight: 700; font-size: 15px; letter-spacing: 1px;
+  padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border);
+}
+.risk-badge.low      { color: var(--ok);    border-color: #24502f; background: #0f1a12; }
+.risk-badge.medium   { color: var(--warn);  border-color: #6a4a1e; background: #1a150c; }
+.risk-badge.high     { color: #ff9b6b;      border-color: #7a3320; background: #1c130e; }
+.risk-badge.critical { color: var(--err);   border-color: #7a2030; background: #1c1013; }
+.risk-score { font-size: 15px; }
+.risk-meta .hint { margin-top: 4px; max-width: 70ch; }
+
+.mono-val { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; color: var(--muted); }
+
+.combo-list { margin: 0; padding-left: 18px; }
+.combo-list li { color: #ff9b6b; margin: 3px 0; }
+.note-list { margin: 8px 0 0; padding-left: 18px; }
+.note-list li { color: var(--muted); font-size: 13px; margin: 2px 0; }
+
+.dperm-list { display: flex; flex-direction: column; gap: 6px; }
+.dperm { display: grid; grid-template-columns: 240px 1fr; gap: 4px 12px; align-items: baseline;
+  padding: 6px 8px; border-radius: 6px; border-left: 3px solid var(--border); background: #0c1017; }
+.dperm.w5, .dperm.w4 { border-left-color: var(--err); }
+.dperm.w3 { border-left-color: var(--warn); }
+.dperm-name { font-family: var(--mono); font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+.dperm-why  { color: var(--muted); font-size: 13px; }
+
+.sig-list { display: flex; flex-direction: column; gap: 8px; }
+.sig { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); background: #0c1017; }
+.sig.low { opacity: .78; border-style: dashed; }
+.sig-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sig-name { font-weight: 600; font-size: 14px; }
+.sig-why { color: var(--muted); font-size: 13px; margin-top: 3px; }
+.tag { font-size: 11px; padding: 2px 8px; border-radius: 12px; border: 1px solid var(--border); color: var(--muted); }
+.tag.low  { color: var(--warn); border-color: #6a4a1e; }
+.tag.hits { font-family: var(--mono); }
+
+.ioc-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 320px; overflow-y: auto; }
+.ioc { font-family: var(--mono); font-size: 12.5px; padding: 3px 8px; border-radius: 5px;
+  background: #0c1017; border: 1px solid var(--border); overflow-wrap: anywhere; }
+.ioc.dom { border-color: #2a3a52; }
+.ioc.ip  { border-color: #7a3320; color: #ff9b6b; }
+
+@media (max-width: 600px) { .dperm { grid-template-columns: 1fr; } }
+
+/* ── APK file browser ──────────────────────────────────────────────────────── */
+.files-pickers { grid-template-columns: 320px 1fr; height: auto; }
+/* File-browser columns manage their own borders/scroll, so undo the generic
+   .col chrome that the Jimple pickers rely on. */
+.files-body .col { min-width: 0; border: 0; background: transparent; overflow: visible; }
+.filetree {
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
+  max-height: 460px; overflow: auto; padding: 6px 0; font-size: 13px;
+}
+.tnode { padding: 3px 8px; white-space: nowrap; cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 6px; }
+.tnode:hover { background: var(--panel2); }
+.tdir { color: var(--text); font-weight: 500; }
+.tcaret { display: inline-block; width: 12px; color: var(--muted); }
+.tfile { color: var(--text); }
+.tfile.sel { background: #16233a; border-left: 2px solid var(--accent); }
+.tname { overflow: hidden; text-overflow: ellipsis; }
+.tsize { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 11px; padding-left: 12px; }
+.tchildren { }
+
+.col-fileview { display: flex; flex-direction: column; min-width: 0; }
+.fileview-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 0 8px; min-height: 28px; }
+.fpath { font-family: var(--mono); font-size: 12.5px; color: var(--accent); overflow-wrap: anywhere; }
+.fileout {
+  margin: 0; border: 1px solid var(--border); border-radius: 8px; background: #0c1017;
+  padding: 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.45;
+  color: var(--text); max-height: 460px; overflow: auto; white-space: pre; tab-size: 2;
+}
+
+@media (max-width: 700px) { .files-pickers { grid-template-columns: 1fr; } .filetree { max-height: 280px; } }
+
+/* ── Decompiled Java (jadx) ─────────────────────────────────────────────────── */
+.decomp-pickers { grid-template-columns: 340px 1fr; height: 560px; }
+.decomp-pickers .col-classes { height: auto; }
+.col-decompview { display: flex; flex-direction: column; min-width: 0; }
+.col-decompview .fileview-head { padding: 0 0 8px; }
+.col-decompview .fileout { flex: 1; max-height: none; }
+.java-src { tab-size: 4; }
+@media (max-width: 700px) { .decomp-pickers { grid-template-columns: 1fr; height: auto; } .decomp-pickers .col-classes { height: 220px; } .col-decompview .fileout { height: 420px; } }

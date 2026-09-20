@@ -28,6 +28,7 @@ instrument step.
 | **`aapt2`** | Package metadata + permissions (forensic) | newest `build-tools/<ver>/` |
 | **`zipalign` + `apksigner`** | Sign the injected APK so it installs | newest `build-tools/<ver>/` |
 | **`adb`** + a device | On-device instrument (optional) | `platform-tools/`, then `PATH` |
+| **`jadx`** | Decompiled-Java view in Malware mode (optional) | `PATH`, `JADX_HOME/bin`, or common install dirs |
 | `unzip` / `strings` | Faster forensic scan (optional) | `PATH` — pure-JS fallback otherwise |
 
 The repo's `jar_libs/` already contains Soot 4.7.1 and its dependencies, so you
@@ -234,6 +235,76 @@ adb version
 
 ---
 
+## Installing jadx (optional — for the decompiled-Java view)
+
+The **☕ Decompiled Java** view in Malware-analysis mode uses [jadx](https://github.com/skylot/jadx)
+to turn DEX back into readable Java. It's optional — without it that view shows a
+notice and the Jimple IR view in Forensic mode still works. jadx only needs a JDK
+(already required for SootSleuth), so no extra runtime is involved.
+
+SootSleuth locates jadx (via `lib/tools.js`'s `findJadx`) in this order:
+`PATH` → `JADX_HOME/bin` → common install dirs (`/opt/jadx`, `~/.local/jadx`,
+Homebrew, …). The `jadx` chip in the UI turns green once it's found. Verify any
+install with `jadx --version`.
+
+> **Prefer the official release zip over Snap.** The Snap package is sandboxed
+> and cannot read APKs outside your home directory, which breaks the decompile
+> step. The zip is self-contained and has no such restriction.
+
+### Linux
+
+The reliable path is the release zip installed into a discovered directory:
+
+```bash
+# Download the latest release zip (check the releases page for the current version)
+VER=1.5.0
+curl -L -o /tmp/jadx.zip \
+  "https://github.com/skylot/jadx/releases/download/v${VER}/jadx-${VER}.zip"
+
+# Install into ~/.local/jadx (a path SootSleuth searches) and link the launcher
+rm -rf ~/.local/jadx && mkdir -p ~/.local/jadx
+unzip -q /tmp/jadx.zip -d ~/.local/jadx
+chmod +x ~/.local/jadx/bin/jadx ~/.local/jadx/bin/jadx-gui
+mkdir -p ~/.local/bin
+ln -sf ~/.local/jadx/bin/jadx ~/.local/bin/jadx
+
+jadx --version    # ensure ~/.local/bin is on your PATH
+```
+
+If `~/.local/bin` isn't on your `PATH`, add `export PATH="$HOME/.local/bin:$PATH"`
+to `~/.bashrc` (or `~/.zshrc`) — or just set `JADX_HOME=$HOME/.local/jadx`.
+
+### macOS
+
+```bash
+brew install jadx        # simplest — puts jadx on your PATH
+jadx --version
+```
+
+Or use the release zip exactly as in the Linux steps above (paths are identical
+under your home directory).
+
+### Windows
+
+1. Download `jadx-<version>.zip` from the
+   [releases page](https://github.com/skylot/jadx/releases) and unzip it, e.g. to
+   `C:\Tools\jadx`.
+2. Point SootSleuth at it, either by:
+   - adding `C:\Tools\jadx\bin` to your **PATH** (System Properties →
+     Environment Variables → Path → New), **or**
+   - setting `JADX_HOME=C:\Tools\jadx` as a user environment variable.
+3. Open a **new** terminal and verify:
+
+   ```powershell
+   jadx.bat --version
+   ```
+
+The Windows launcher is `bin\jadx.bat`; `findJadx` looks for it under `PATH` and
+`JADX_HOME\bin`.
+
+> Restart `npm start` after installing jadx so the server re-checks tools and the
+> chip flips to green.
+
 ## Preparing an Android device (optional — for on-device instrument)
 
 The **Install & capture logcat** button installs the injected APK on a real
@@ -293,5 +364,7 @@ dropdown.
 | Inject works but the APK won't install | Unsigned output — build-tools missing when it ran, or a signature clash. Check the console log; ensure zipalign/apksigner chips are green, reinject. |
 | `OutOfMemoryError` during inject-all on a large app | Raise the heap: start the server with `SOOTSLEUTH_HEAP=12g npm start`, or use a narrow **Custom class filter** instead of inject-all. |
 | Chip: `✕ java` / `✕ javac` | JDK not on `PATH`. Install a JDK 17+ (Step 0). `javac` is required to compile the helpers. |
+| Chip: `✕ injector` | The Soot helper `java/LogInjector.class` isn't built yet. It compiles automatically on your first inject; to build it up front run `javac -cp "$(node -pe 'require(\"./lib/tools\").jarClasspath()')" -d java/ java/LogInjector.java java/DexSplicer.java`. Needs `javac` + `jars` chips green. |
+| Chip: `✕ jadx` (Decompiled Java greyed out) | jadx not found. Install it (see *Installing jadx* above), put it on `PATH` or set `JADX_HOME`, then restart `npm start`. Avoid the Snap build — its sandbox can't read APKs and the decompile will fail. |
 | `adb devices` empty | See the device-setup notes above (authorize the prompt; Linux udev; Windows USB driver). |
 | Forensic permissions look empty | Install **aapt2** (Build-Tools). A binary `AndroidManifest.xml` yields nothing without it. |

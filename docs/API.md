@@ -48,6 +48,40 @@ Accepts `.apk` / `.apks` / `.xapk`, 2 GB max. Stores files under
 Synchronous static scan. Body: `{ jobId, file? }`. Returns the inspection object
 (see [FORENSIC.md → Result shape](FORENSIC.md#result-shape)).
 
+### `POST /api/malware`
+
+Synchronous static malware triage. Body: `{ jobId, file? }`. Returns the analysis
+object (see [FORENSIC.md → Malware analysis](FORENSIC.md#malware-analysis)):
+`{ file, sizeBytes, hashes:{md5,sha1,sha256}, meta, permSource, riskScore,
+riskLevel, note, dangerousPermissions[], otherPermissions[], behaviors[],
+combos[], packer:{detected,hits,notes}, iocs:{urls,domains,ips}, iocCounts, scan }`.
+Read-only; nothing is executed.
+
+### `POST /api/files`
+
+APK file tree. Body: `{ jobId, file? }` → `{ file, entryCount, tree, bundle? }`
+where `tree` is a nested array of `{ name, path, dir, children }` (dirs) and
+`{ name, path, dir:false, size, kind }` (files); `kind` ∈ manifest, resources,
+dex, native, image, font, signature, xml, text, binary, other.
+
+### `POST /api/file`
+
+One file's contents. Body: `{ jobId, file?, entry }` (`entry` = a ZIP path from
+the tree). Returns `{ path, kind, size, format, … }`:
+- `format:"axml"` / `"resources"` → `content` is decoded text (via aapt2/aapt).
+- `format:"text"` → `content` is UTF-8 (`truncated:true` past 512 KB).
+- `format:"binary"` → `hex` (first 512 bytes) + `strings` (sample).
+`entry` only indexes the APK's own ZIP directory — an unknown entry yields
+`{ error }`, never a filesystem read.
+
+### `POST /api/decompile`
+
+Decompiled Java for one class (jadx). Body: `{ jobId, file?, className }` →
+`{ className, java, engine:"jadx", cached }`. Class names come from
+`/api/classes`. Output is cached per job under `uploads/<jobId>/.jadx/`. If jadx
+isn't installed, responds **501** `{ error, code:"NO_JADX" }`; the Jimple views
+still work without it.
+
 ### `POST /api/classes`
 
 Body: `{ jobId, file? }` → `{ classes: string[] }` — the app's own class names,

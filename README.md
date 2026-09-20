@@ -14,7 +14,24 @@ Drag an APK into the browser and either investigate it or instrument it.
   edges; auto-scoped to the app's package, pan/zoom, click a node to jump to its
   Jimple). The call graph **identifies the app's entry points** — Android
   lifecycle roots (`Application`/`Activity`/`Service`/…) — and highlights the
-  primary starting point, auto-centering the view on it. Read-only.
+  primary starting point, auto-centering the view on it. Also an **APK file
+  browser**: an expandable tree of every original file packed in the APK, with a
+  viewer that decodes the binary `AndroidManifest.xml` and `res/*.xml` (AXML) and
+  `resources.arsc` to readable text, shows text files inline, and renders
+  binaries (`.so`/`.dex`/images/fonts) as a hex head + printable strings.
+  Read-only.
+- **🦠 Malware analysis** — static triage for researchers & forensic analysts:
+  file hashes (MD5/SHA-1/SHA-256), dangerous-permission analysis (accessibility,
+  overlay, SMS, device-admin, boot-persist, …, each with why it matters),
+  suspicious API/behavior signatures (accessibility abuse, screen overlays,
+  dynamic code loading, SMS/OTP interception, emulator/root evasion, and more),
+  network IOCs (URLs / domains / IPs, de-noised of Java-package false hits),
+  known-packer detection, and correlated-indicator combos (e.g. accessibility +
+  overlay = classic banker pattern) — rolled into a triage-priority score.
+  Heuristic and read-only: nothing is executed. Also a **decompiled-Java view**:
+  pick an app class → view its source decompiled by **jadx** (optional tool;
+  falls back to a clear notice, with Jimple IR always available in Forensic
+  mode). See [docs/FORENSIC.md](docs/FORENSIC.md).
 - **💉 Hacking** — inject `Log.d("SootInjection", "Entering: <method sig>")` at
   the start of every targeted method via Soot (`LogInjector.java`), then
   zipalign + apksign the result. Optionally install the injected APK on a
@@ -28,7 +45,7 @@ The README is the overview. Detailed, code-level docs live in [`docs/`](docs/):
 |---|---|
 | [docs/SETUP.md](docs/SETUP.md) | **Setup from scratch** (Windows/macOS/Linux): JDK + Node, the Android SDK, where the platform JARs live for Soot, installing `apksigner`/`zipalign`, and preparing a device |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the pieces fit; request flow; sync vs async+SSE; directory layout; design choices |
-| [docs/FORENSIC.md](docs/FORENSIC.md) | The static scan (`inspector.js`) and the Jimple/CFG explorer (`jimple.js` + `JimpleDumper.java`) |
+| [docs/FORENSIC.md](docs/FORENSIC.md) | The static scan (`inspector.js`), the Jimple/CFG explorer (`jimple.js` + `JimpleDumper.java`), the APK file browser (`files.js`), the malware triage (`malware.js`), and the jadx decompiled-Java view (`decompile.js`) |
 | [docs/INJECTION.md](docs/INJECTION.md) | The full inject pipeline: `LogInjector` → `DexSplicer` (VerifyError fix) → signing → XAPK bundles → on-device instrument |
 | [docs/API.md](docs/API.md) | Every HTTP endpoint with request/response shapes |
 | [docs/INTERNALS.md](docs/INTERNALS.md) | Cross-platform tool discovery, the subprocess runner, the job/SSE registry, the frontend, building the Java helpers |
@@ -41,7 +58,8 @@ The README is the overview. Detailed, code-level docs live in [`docs/`](docs/):
 | Injection | JDK, Android platform JARs (`ANDROID_HOME`) |
 | Signing | `zipalign` + `apksigner` (Android build-tools) |
 | Instrumentation | `adb` + a connected device/emulator |
-| Package metadata | `aapt2` (build-tools) — optional |
+| Package metadata + file browser decoding | `aapt2` (build-tools) — optional |
+| Decompiled-Java view (Malware mode) | `jadx` on `PATH` or in `JADX_HOME` — optional |
 
 Tool availability is shown as chips in the UI; missing tools degrade
 gracefully (e.g. forensic scan falls back to a pure-JS ZIP reader when `unzip`

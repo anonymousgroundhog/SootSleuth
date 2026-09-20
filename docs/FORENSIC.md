@@ -273,3 +273,130 @@ nodes by kind, and outlines entry-point nodes in green (the primary is filled).
   which returns a `setView` used by the focus helper), and **clicking a node
   jumps to that method's Jimple** (switches to the Jimple tab and loads it). All
   self-contained — no graph library.
+
+## Malware analysis
+
+`lib/malware.js` (`analyzeApk`, route `POST /api/malware`) is a second static
+pass aimed at malware researchers and forensic analysts. It reuses the same
+ZIP/`strings`/`aapt2` helpers as `inspector.js` (re-exported from it), so it
+reads the APK identically (unzip+strings when present, pure-JS fallback). It is
+**read-only** — nothing is executed, installed, or contacted — and every finding
+is a **heuristic**, not a verdict.
+
+### What it extracts
+
+- **Hashes** — MD5 / SHA-1 / SHA-256 of the uploaded file (IOC reporting).
+- **Dangerous permissions** — the requested permissions that malware commonly
+  abuses (accessibility, `SYSTEM_ALERT_WINDOW`, device-admin, SMS family, boot
+  persistence, install-packages, notification listener, …), each weighted and
+  annotated with *why it matters*. Sourced from `aapt2 dump permissions` (or the
+  XAPK `manifest.json` fallback) — an accurate, intent-revealing signal.
+- **Behavior signatures** — families of DEX-string patterns mapping to a
+  capability (accessibility abuse, screen overlay, dynamic code loading, SMS
+  interception, runtime crypto, native exec, root/emulator evasion, device
+  admin, notification listener, screen capture, keylogging, broadcast
+  suppression).
+- **Network IOCs** — URLs, domains, and IPs pulled from DEX strings and small
+  text assets, de-duplicated and de-noised.
+- **Packer / obfuscation** — named commercial packers (Jiagu, Legu, Bangcle,
+  Ijiami, …) and a sparse-strings-for-size tell as high-confidence `hits`;
+  weaker tells (extra `.dex` / opaque blobs in `assets/`) as `notes`.
+- **Triage score & level** — an additive score → `low` / `medium` / `high` /
+  `critical`. It prioritises analyst attention; it is **not** a malware verdict.
+
+### False-positive controls
+
+Bundled SDKs (androidx, ktor, OneSignal, ad networks) reference sensitive
+framework classes without using them, so naïve string matching flags almost
+every Play-Store app as "critical". Three mechanisms keep the signal honest:
+
+- **Co-occurrence thresholds** — each behavior family has a `min` number of
+  distinct pattern matches before it fires; `strong` (usage-proving) patterns
+  count double. A lone framework class name is not enough.
+- **Permission gating** — families that are meaningless without a matching
+  permission (accessibility, overlay, SMS, notification listener, device admin)
+  are suppressed when that permission isn't granted, unless there's direct usage
+  evidence — in which case they're kept but flagged **low-confidence** and scored
+  at minimum weight.
+- **Combination bonuses** — the score is driven mainly by *combinations* that
+  match real banker/RAT tradecraft (accessibility + overlay, SMS + notification
+  listener, dynamic-load + packer), not by counting lone capabilities. Only
+  permission-consistent (non-low-confidence) behaviors contribute to combos.
+
+Domain extraction additionally drops Java/Kotlin package namespaces
+(`androidx.*`, `io.ktor`, `java.com`, leading-digit `strings` artifacts) and
+package-root-colliding TLDs (`.io`/`.app`/`.dev`/`.work`) unless seen inside a
+real `http(s)://` URL, plus an allowlist of ubiquitous first-party hosts.
+
+### The frontend
+
+`renderMalware(d)` (in `public/app.js`, tab `data-mode="malware"`) renders a
+colour-coded risk banner (with the heuristic disclaimer), a file-identity card
+with the three hashes, correlated-indicator combos, dangerous permissions
+(border-weighted by severity), behavior signatures (low-confidence ones dashed
+and tagged), packer hits/notes, and scrollable IOC lists for domains / URLs /
+IPs. All output is HTML-escaped (`esc`). Styling reuses the forensic card /
+badge / perm classes plus a malware-specific block in `style.css`.
+
+## APK file browser
+
+`lib/files.js` (`listApkFiles` / `readApkFile`, routes `POST /api/files` and
+`POST /api/file`) lets an analyst browse the **original files** packed inside the
+APK — the companion to the Jimple/IR view, which shows decompiled code rather
+than the raw archive.
+
+- **Tree** — built from the ZIP central directory via inspector's
+  `listZipEntriesDetailed` (clean names + uncompressed sizes; never the noisy
+  `unzip -l` text). Each file is `classify()`-ed into a kind (manifest,
+  resources, dex, native, image, font, signature, xml, text, binary, other) that
+  drives the icon in the UI.
+- **Read** — Android's binary formats are decoded on demand:
+  - `AndroidManifest.xml` and any binary-AXML `res/*.xml` → `aapt2 dump xmltree`
+    (detected by the `0x00080003` AXML magic; `aapt` syntax used as a fallback).
+  - `resources.arsc` → `aapt2 dump resources` (capped at 4000 lines).
+  - Text extensions (json/txt/smali/properties/pem/… and non-binary XML) → UTF-8,
+    capped at 512 KB.
+  - Everything else → a hex dump of the first 512 bytes plus a sample of
+    printable strings.
+
+`entry` names index only the APK's own ZIP directory — `extractEntry` matches an
+exact central-directory name, so a traversal-looking `entry` simply isn't found;
+nothing is read from the filesystem. Bundles (`.xapk`/`.apks`) are resolved to
+their base APK first, exactly like the other forensic reads.
+
+### The frontend
+
+The **🗂️ APK files** section under the Forensic panel mirrors the Jimple
+explorer's load-then-browse flow. `renderFileTree` shows a collapsible nested
+tree when unfiltered and a flat matching-path list when the search box is used;
+`openFile` fetches one entry and renders decoded text, or a hex + strings view
+for binaries, in a monospace pane. Icons come from a `kind → emoji` map; sizes
+are humanised. All output is HTML-escaped.
+
+## Decompiled Java (jadx)
+
+The **☕ Decompiled Java** view in Malware-analysis mode (`lib/decompile.js`,
+route `POST /api/decompile`) shows a class's actual Java source, decompiled by
+[jadx](https://github.com/skylot/jadx) — the readable counterpart to the Jimple
+IR view. jadx is **optional**: `findJadx()` in `lib/tools.js` looks for it on
+`PATH`, under `JADX_HOME/bin`, and in common install spots, surfacing a `jadx`
+chip in the UI; when absent, `/api/decompile` returns **501** with
+`code:"NO_JADX"` and the frontend shows an install hint (Jimple stays available).
+
+- **Per-class, lazy** — each request runs `jadx --single-class <fqcn>` against
+  the same DEX-bearing base APK Soot uses, so even large apps decompile one class
+  in a couple of seconds rather than minutes. Flags: `--no-res` (code only),
+  `--no-imports` (fully-qualified names read clearer for analysis),
+  `--show-bad-code` (best-effort output over hard failure).
+- **Cached per job** — output lands in `uploads/<jobId>/.jadx/sources/…`; a
+  re-request (or an inner class sharing the outer's file) is served from disk
+  (`cached:true`). The `uploads/` tree is git-ignored, so nothing is committed.
+- **Class list** — reuses `/api/classes` (Soot), so the picker lists the app's
+  own classes; inner classes (`a.b.C$D`) resolve to their outer class's file.
+
+### The frontend
+
+`renderDecompClasses` / `openDecomp` in `public/app.js` mirror the file-browser
+flow: **Load classes** populates a searchable picker; clicking a class fetches
+its Java into a monospace pane, tagged with the engine and a `cached` marker. A
+jadx-missing response is caught and rendered inline with install guidance.

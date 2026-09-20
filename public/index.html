@@ -29,6 +29,7 @@
     <section id="modes" class="modes hidden">
       <div class="tabs">
         <button class="tab active" data-mode="forensic">🕵️ Forensic mode</button>
+        <button class="tab" data-mode="malware">🦠 Malware analysis</button>
         <button class="tab" data-mode="hacking">💉 Hacking mode</button>
       </div>
 
@@ -94,6 +95,57 @@
                   <span><i class="n-dot static"></i> static</span>
                   <span><i class="n-dot method"></i> instance method</span>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Original file browser -->
+        <div class="explorer">
+          <div class="explorer-head">
+            <h3>🗂️ APK files</h3>
+            <button id="loadFilesBtn" class="secondary">Load files</button>
+            <span class="hint" id="filesHint">Browse the original files packed in the APK. Binary AndroidManifest.xml and resources are decoded to readable text; text files shown inline; binaries as hex + strings.</span>
+          </div>
+
+          <div id="filesBody" class="explorer-body files-body hidden">
+            <div class="pickers files-pickers">
+              <div class="col col-tree">
+                <input type="text" id="fileSearch" class="search" placeholder="filter files…" />
+                <div id="fileTree" class="filetree"></div>
+              </div>
+              <div class="col col-fileview">
+                <div class="fileview-head" id="fileviewHead"><span class="hint">Pick a file to view its contents.</span></div>
+                <pre id="fileOut" class="fileout"></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Malware analysis -->
+      <div class="panel" data-panel="malware">
+        <p class="panel-desc">Static malware triage for researchers &amp; forensic analysts: file hashes, dangerous permissions, suspicious API/behavior signatures, network IOCs (URLs / domains / IPs), and packer hints — rolled into a triage-priority score. Read-only; nothing is executed. Heuristic, not a verdict.</p>
+        <button id="malwareBtn" class="primary">Run malware analysis</button>
+        <div id="malwareResult" class="result"></div>
+
+        <!-- Decompiled Java (jadx) -->
+        <div class="explorer">
+          <div class="explorer-head">
+            <h3>☕ Decompiled Java</h3>
+            <button id="loadDecompClassesBtn" class="secondary">Load classes</button>
+            <span class="hint" id="decompHint">Decompile the app's classes back to readable Java (via jadx) to inspect suspicious code. Complements the Jimple IR view in Forensic mode.</span>
+          </div>
+
+          <div id="decompBody" class="explorer-body hidden">
+            <div class="pickers decomp-pickers">
+              <div class="col col-classes">
+                <input type="text" id="decompSearch" class="search" placeholder="filter classes…" />
+                <ul id="decompClassList" class="picklist"></ul>
+              </div>
+              <div class="col col-decompview">
+                <div class="fileview-head" id="decompHead"><span class="hint">Pick a class to view its decompiled Java.</span></div>
+                <pre id="decompOut" class="fileout java-src">Pick a class to view its decompiled Java.</pre>
               </div>
             </div>
           </div>

@@ -36,7 +36,8 @@ Server-Sent Events (SSE).
 
 | Mode | Endpoints | Backing code | Writes the APK? |
 |---|---|---|---|
-| **Forensic** | `/api/inspect`, `/api/classes`, `/api/methods`, `/api/jimple`, `/api/cfg` | `lib/inspector.js`, `lib/jimple.js` + `java/JimpleDumper.java` | No — read-only |
+| **Forensic** | `/api/inspect`, `/api/files`, `/api/file`, `/api/classes`, `/api/methods`, `/api/jimple`, `/api/cfg`, `/api/callgraph` | `lib/inspector.js`, `lib/files.js`, `lib/jimple.js` + `java/JimpleDumper.java` | No — read-only |
+| **Malware analysis** | `/api/malware`, `/api/decompile` (+ `/api/classes` for the picker) | `lib/malware.js`, `lib/decompile.js` (jadx) | No — read-only |
 | **Hacking** | `/api/inject`, `/api/instrument` | `lib/injector.js` + `java/LogInjector.java` + `java/DexSplicer.java`, `lib/instrument.js` | Yes — produces a signed injected APK/bundle |
 
 ## Two response styles
@@ -74,6 +75,10 @@ lib/
   tools.js         Cross-platform binary/SDK discovery + constants
   runner.js        Subprocess spawner streaming stdout/stderr line-by-line
   inspector.js     Forensic static analysis (ad SDKs, perms, metadata)
+                   + shared ZIP/strings/aapt helpers reused by files/malware
+  files.js         Forensic APK file browser (tree + AXML/arsc/text/hex reads)
+  malware.js       Malware triage (hashes, perms, behavior sigs, IOCs, score)
+  decompile.js     Malware decompiled-Java view (jadx --single-class, cached)
   jimple.js        Forensic Jimple IR + CFG (wraps JimpleDumper.java)
   injector.js      Inject pipeline: compile → Soot → dex-splice → sign
   bundle.js        XAPK/.apks unpack + repack (CLI or pure-JS)

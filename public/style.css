@@ -114,10 +114,13 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .explorer-head .hint { flex: 1 1 240px; }
 
 .explorer-body {
-  display: grid; grid-template-columns: 240px 260px 1fr; gap: 12px;
-  margin-top: 14px; height: 520px;
+  display: flex; flex-direction: column; gap: 12px; margin-top: 14px;
 }
+/* Class + method pickers share a short top row; the view pane sits full-width
+   below to give Jimple / CFG / call-graph content the whole panel width. */
+.pickers { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; height: 220px; }
 .col { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.col-view { height: 640px; }
 .search {
   margin: 8px; padding: 7px 9px; border-radius: 7px; border: 1px solid var(--border);
   background: #0c1017; color: var(--text); font: 12px var(--mono);
@@ -191,4 +194,4 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .cfg-legend .n-dot.static { background: #6a4a1e; }
 .cfg-legend .n-dot.method { background: #2b5573; }
 
-@media (max-width: 900px) { .explorer-body { grid-template-columns: 1fr; height: auto; } .col { height: 240px; } .col-view { height: 460px; } }
+@media (max-width: 700px) { .pickers { grid-template-columns: 1fr; height: auto; } .pickers .col { height: 200px; } .col-view { height: 520px; } }

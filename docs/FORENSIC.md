@@ -93,6 +93,10 @@ Soot lifts Dalvik bytecode into **Jimple**, a typed three-address IR that is far
 easier to read than smali. The explorer exposes that IR and the per-method
 control-flow graph for the app's own classes.
 
+> **New to Jimple?** [docs/JIMPLE.md](JIMPLE.md) is a from-zero guide to the IR
+> itself — every statement form, the four invoke kinds, labels/gotos, traps,
+> and a worked example — while this section covers how SootSleuth produces it.
+
 ### `java/JimpleDumper.java`
 
 A single Soot program with four modes, all read-only

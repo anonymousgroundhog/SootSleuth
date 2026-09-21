@@ -56,6 +56,7 @@ The README is the overview. Detailed, code-level docs live in [`docs/`](docs/):
 
 | Doc | Covers |
 |---|---|
+| [docs/JIMPLE.md](docs/JIMPLE.md) | **Jimple for beginners** — what Soot's IR is, how to read every statement/invoke/label form, exceptions & traps, a worked method, and how it maps to the CFG, the call graph and the injected log line |
 | [docs/SETUP.md](docs/SETUP.md) | **Setup from scratch** (Windows/macOS/Linux): JDK + Node, the Android SDK, where the platform JARs live for Soot, installing `apksigner`/`zipalign`, and preparing a device |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the pieces fit; request flow; sync vs async+SSE; directory layout; design choices |
 | [docs/FORENSIC.md](docs/FORENSIC.md) | The static scan (`inspector.js`), the Jimple/CFG explorer (`jimple.js` + `JimpleDumper.java`), the APK file browser (`files.js`), the malware triage (`malware.js`), the jadx decompiled-Java view (`decompile.js`), and the DroidLysis suspicious-code tab (`droidlysis.js`) |
